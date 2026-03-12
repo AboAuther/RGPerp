@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
+  Button,
   Card,
   Col,
   Descriptions,
@@ -9,16 +10,20 @@ import {
   Segmented,
   Select,
   Skeleton,
+  Space,
   Typography,
 } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { get } from '../services/api'
 import type { KlineItem, MarketTicker, SymbolInfo } from '../types'
 import KlineChart from '../components/trading/KlineChart'
+import { useThemeStore } from '../stores/themeStore'
 
 export default function TradePage() {
   const [symbol, setSymbol] = useState<string>('BTC-PERP')
   const [interval, setInterval] = useState<'1m' | '5m' | '15m' | '1h'>('1m')
+  const { mode } = useThemeStore()
+  const isDark = mode === 'dark'
 
   const marketsQuery = useQuery({
     queryKey: ['markets'],
@@ -69,6 +74,54 @@ export default function TradePage() {
 
   return (
     <div>
+      <Card
+        style={{ marginBottom: 16, border: 'none' }}
+        styles={{ body: { padding: 18 } }}
+        className="rg-glass-card"
+      >
+        <Row gutter={[20, 12]} align="middle" justify="space-between">
+          <Col>
+            <Space direction="vertical" size={2}>
+              <Space size={10}>
+                <Typography.Title level={3} style={{ margin: 0 }}>
+                  BTC-USDC
+                </Typography.Title>
+                <Button size="small" type="primary" ghost>
+                  40x
+                </Button>
+              </Space>
+              <Typography.Text type="secondary">Chart feed aligned to BTC/USDC market</Typography.Text>
+            </Space>
+          </Col>
+          <Col>
+            <Space size={24} wrap>
+              <div>
+                <Typography.Text type="secondary">Mark</Typography.Text>
+                <Typography.Title level={4} style={{ margin: 0, color: '#2ec9b0' }}>
+                  {tickerQuery.data?.mark_price ?? '--'}
+                </Typography.Title>
+              </div>
+              <div>
+                <Typography.Text type="secondary">Oracle</Typography.Text>
+                <Typography.Title level={4} style={{ margin: 0 }}>
+                  {tickerQuery.data?.index_price ?? '--'}
+                </Typography.Title>
+              </div>
+              <div>
+                <Typography.Text type="secondary">Spread</Typography.Text>
+                <Typography.Title level={4} style={{ margin: 0 }}>
+                  {tickerQuery.data
+                    ? `${(
+                        Number(tickerQuery.data.best_ask) - Number(tickerQuery.data.best_bid)
+                      ).toFixed(2)}`
+                    : '--'}
+                </Typography.Title>
+              </div>
+            </Space>
+          </Col>
+        </Row>
+      </Card>
+
       <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
         <Col>
           <Typography.Title level={3} style={{ marginBottom: 0 }}>
@@ -108,10 +161,13 @@ export default function TradePage() {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
-          <Card title="K 线图表" style={{ minHeight: 400 }}>
+          <Card title="K 线图表" style={{ minHeight: 400 }} className="rg-glass-card">
             <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
               <Col>
-                <Typography.Text type="secondary">TradingView Lightweight Charts</Typography.Text>
+                <Space size={10}>
+                  <Typography.Text strong>BTCUSD</Typography.Text>
+                  <Typography.Text type="secondary">Hyperliquid style</Typography.Text>
+                </Space>
               </Col>
               <Col>
                 <Segmented
@@ -124,18 +180,24 @@ export default function TradePage() {
             {klinesQuery.isLoading ? (
               <Skeleton active paragraph={{ rows: 8 }} />
             ) : klinesQuery.data && klinesQuery.data.length > 0 ? (
-              <KlineChart data={klinesQuery.data} />
+              <KlineChart data={klinesQuery.data} dark={isDark} />
             ) : (
               <Empty description="暂无K线数据" />
             )}
-            <Typography.Text>
-              当前交易对: {currentSymbol?.name ?? '-'}（{currentSymbol?.base_asset ?? '-'} /{' '}
-              {currentSymbol?.quote_asset ?? '-'}）
-            </Typography.Text>
+            <Descriptions
+              size="small"
+              column={{ xs: 1, sm: 2, md: 4 }}
+              style={{ marginTop: 16 }}
+            >
+              <Descriptions.Item label="交易标的">{currentSymbol?.name ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="图表来源">BTC / USDC</Descriptions.Item>
+              <Descriptions.Item label="最优买">{tickerQuery.data?.best_bid ?? '--'}</Descriptions.Item>
+              <Descriptions.Item label="最优卖">{tickerQuery.data?.best_ask ?? '--'}</Descriptions.Item>
+            </Descriptions>
           </Card>
         </Col>
         <Col xs={24} lg={8}>
-          <Card title="下单面板" style={{ minHeight: 400 }}>
+          <Card title="下单面板" style={{ minHeight: 400 }} className="rg-glass-card">
             <Alert
               type="info"
               showIcon
@@ -145,7 +207,7 @@ export default function TradePage() {
           </Card>
         </Col>
         <Col xs={24}>
-          <Card title="当前持仓">
+          <Card title="当前持仓" className="rg-glass-card">
             <Typography.Text type="secondary">持仓列表与成交历史将在下一批接口完成后联调。</Typography.Text>
           </Card>
         </Col>

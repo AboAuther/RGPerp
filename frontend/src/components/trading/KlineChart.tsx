@@ -13,9 +13,10 @@ import type { KlineItem } from '../../types'
 interface KlineChartProps {
   data: KlineItem[]
   height?: number
+  dark?: boolean
 }
 
-export default function KlineChart({ data, height = 360 }: KlineChartProps) {
+export default function KlineChart({ data, height = 360, dark = true }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -28,28 +29,32 @@ export default function KlineChart({ data, height = 360 }: KlineChartProps) {
     const chart = createChart(containerRef.current, {
       height,
       layout: {
-        background: { type: ColorType.Solid, color: '#ffffff' },
-        textColor: '#475467',
+        background: { type: ColorType.Solid, color: dark ? '#0b1720' : '#ffffff' },
+        textColor: dark ? '#93abc0' : '#475467',
       },
       grid: {
-        vertLines: { color: '#f0f2f5' },
-        horzLines: { color: '#f0f2f5' },
+        vertLines: { color: dark ? 'rgba(148, 163, 184, 0.08)' : '#f0f2f5' },
+        horzLines: { color: dark ? 'rgba(148, 163, 184, 0.08)' : '#f0f2f5' },
       },
       rightPriceScale: {
-        borderColor: '#e4e7ec',
+        borderColor: dark ? '#17303d' : '#e4e7ec',
       },
       timeScale: {
-        borderColor: '#e4e7ec',
+        borderColor: dark ? '#17303d' : '#e4e7ec',
         timeVisible: true,
         secondsVisible: false,
+      },
+      crosshair: {
+        vertLine: { color: dark ? 'rgba(32, 201, 181, 0.25)' : 'rgba(22, 119, 255, 0.2)' },
+        horzLine: { color: dark ? 'rgba(32, 201, 181, 0.25)' : 'rgba(22, 119, 255, 0.2)' },
       },
     })
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#16a34a',
-      downColor: '#dc2626',
-      wickUpColor: '#16a34a',
-      wickDownColor: '#dc2626',
+      upColor: '#2ec9b0',
+      downColor: '#ff6b6b',
+      wickUpColor: '#2ec9b0',
+      wickDownColor: '#ff6b6b',
       borderVisible: false,
     })
 
@@ -71,7 +76,7 @@ export default function KlineChart({ data, height = 360 }: KlineChartProps) {
       chartRef.current = null
       seriesRef.current = null
     }
-  }, [height])
+  }, [dark, height])
 
   useEffect(() => {
     if (!seriesRef.current) {

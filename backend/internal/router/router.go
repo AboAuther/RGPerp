@@ -23,12 +23,14 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	accountSvc := service.NewAccountService(db)
 	withdrawalSvc := service.NewWithdrawalService(db, cfg)
 	marketSvc := service.NewMarketService(db)
+	orderSvc := service.NewOrderService(db)
 
 	authH := handler.NewAuthHandler(authSvc)
 	accountH := handler.NewAccountHandler(accountSvc)
 	walletH := handler.NewWalletHandler(cfg)
 	withdrawalH := handler.NewWithdrawalHandler(withdrawalSvc)
 	marketH := handler.NewMarketHandler(marketSvc)
+	orderH := handler.NewOrderHandler(orderSvc)
 
 	r.GET("/health", healthH.Health)
 
@@ -47,6 +49,8 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authenticated.GET("/wallet/deposit-info", walletH.DepositInfo)
 	authenticated.POST("/withdrawals", withdrawalH.Create)
 	authenticated.GET("/withdrawals", withdrawalH.List)
+	authenticated.POST("/orders", orderH.Create)
+	authenticated.GET("/positions", orderH.ListPositions)
 
 	return r
 }

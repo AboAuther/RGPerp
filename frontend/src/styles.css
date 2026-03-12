@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+:root {
+  font-family: 'IBM Plex Sans', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(26, 188, 156, 0.12), transparent 24%),
+    radial-gradient(circle at top right, rgba(61, 90, 254, 0.14), transparent 22%),
+    linear-gradient(180deg, #07131b 0%, #091821 48%, #0a141c 100%);
+  color: #e6eef5;
+}
+
+body.light-theme {
+  background:
+    radial-gradient(circle at top left, rgba(72, 187, 120, 0.12), transparent 24%),
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 22%),
+    linear-gradient(180deg, #f3f7fb 0%, #edf2f7 48%, #e8eef5 100%);
+  color: #10202d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.rg-mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.rg-glass-card {
+  backdrop-filter: blur(18px);
+}

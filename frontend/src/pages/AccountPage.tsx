@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { encodeFunctionData, parseUnits, toHex } from 'viem'
 import { post, get } from '../services/api'
 import { useAuthStore } from '../stores/authStore'
+import { useThemeStore } from '../stores/themeStore'
 import type {
   Account,
   AuthChallenge,
@@ -88,6 +89,8 @@ export default function AccountPage() {
   const [messageApi, contextHolder] = message.useMessage()
   const [withdrawSignature, setWithdrawSignature] = useState<WithdrawalRequest | null>(null)
   const [deadlineMode, setDeadlineMode] = useState<DeadlineMode>('local')
+  const { mode } = useThemeStore()
+  const isDark = mode === 'dark'
 
   const authenticated = isAuthenticated()
 
@@ -294,6 +297,84 @@ export default function AccountPage() {
     },
   })
 
+  const executeWithdrawalMutation = useMutation({
+    mutationFn: async (request: WithdrawalRequest) => {
+      if (!window.ethereum) {
+        throw new Error('wallet not found')
+      }
+      const depositInfo = depositInfoQuery.data
+      if (!depositInfo?.vault_address) {
+        throw new Error('vault config not ready')
+      }
+
+      const walletAccounts = (await window.ethereum.request({
+        method: 'eth_requestAccounts',
+      })) as string[]
+      const from = walletAccounts[0]
+      if (!from) {
+        throw new Error('wallet account not found')
+      }
+
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: toHex(Number(depositInfo.chain_id)) }],
+        })
+      } catch (_err) {
+        // Ignore switch failures for local chains.
+      }
+
+      const withdrawData = encodeFunctionData({
+        abi: [
+          {
+            type: 'function',
+            name: 'withdraw',
+            stateMutability: 'nonpayable',
+            inputs: [
+              { name: 'amount', type: 'uint256' },
+              { name: 'nonce', type: 'uint256' },
+              { name: 'deadline', type: 'uint256' },
+              { name: 'signature', type: 'bytes' },
+            ],
+            outputs: [],
+          },
+        ],
+        functionName: 'withdraw',
+        args: [
+          parseUsdcAmountToUnits(request.amount),
+          BigInt(request.nonce),
+          BigInt(deadlineUnix(request.deadline)),
+          request.signature as `0x${string}`,
+        ],
+      })
+
+      const txHash = (await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [
+          {
+            from,
+            to: depositInfo.vault_address,
+            data: withdrawData,
+          },
+        ],
+      })) as string
+      await waitForTxReceipt(txHash)
+      return txHash
+    },
+    onSuccess: (txHash) => {
+      void messageApi.success(`提现交易已上链: ${txHash}`)
+      queryClient.invalidateQueries({ queryKey: ['account'] })
+      queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
+      setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ['account'] })
+        void queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
+      }, 6000)
+    },
+    onError: (error) => {
+      void messageApi.error(error instanceof Error ? error.message : '提现执行失败')
+    },
+  })
+
   const withdrawalColumns = useMemo(
     () => [
       { title: '请求 ID', dataIndex: 'request_id', key: 'request_id' },
@@ -314,9 +395,7 @@ export default function AccountPage() {
               type="text"
               icon={<SwapOutlined />}
               onClick={() => setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))}
-            >
-              {deadlineMode === 'local' ? '看时间戳' : '看本地时间'}
-            </Button>
+            />
           </Space>
         ),
         dataIndex: 'deadline',
@@ -324,8 +403,26 @@ export default function AccountPage() {
         render: (value: string) => <Typography.Text>{formatDeadline(value, deadlineMode)}</Typography.Text>,
       },
       { title: '链上 Tx', dataIndex: 'tx_hash', key: 'tx_hash', render: (value?: string) => value || '-' },
+      {
+        title: '操作',
+        key: 'action',
+        render: (_: unknown, record: WithdrawalRequest) =>
+          record.status === 'signed' ? (
+            <Button
+              size="small"
+              type="primary"
+              ghost={isDark}
+              loading={executeWithdrawalMutation.isPending}
+              onClick={() => executeWithdrawalMutation.mutate(record)}
+            >
+              钱包提现
+            </Button>
+          ) : (
+            '-'
+          ),
+      },
     ],
-    [deadlineMode],
+    [deadlineMode, executeWithdrawalMutation, isDark],
   )
 
   const depositColumns = useMemo(
@@ -372,7 +469,7 @@ export default function AccountPage() {
       ) : null}
       <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
-          <Card title="账户余额">
+          <Card title="账户余额" className="rg-glass-card">
             <Descriptions column={1} size="small">
               <Descriptions.Item label="钱包地址">{walletAddress}</Descriptions.Item>
               <Descriptions.Item label="资产">{accountQuery.data?.asset ?? 'USDC'}</Descriptions.Item>
@@ -388,7 +485,7 @@ export default function AccountPage() {
           </Card>
         </Col>
         <Col xs={24} md={8}>
-          <Card title="充值">
+          <Card title="充值" className="rg-glass-card">
             <Descriptions column={1} size="small">
               <Descriptions.Item label="链 ID">{depositInfoQuery.data?.chain_id ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="Vault">{depositInfoQuery.data?.vault_address ?? '-'}</Descriptions.Item>
@@ -420,7 +517,7 @@ export default function AccountPage() {
           </Card>
         </Col>
         <Col xs={24} md={8}>
-          <Card title="提现">
+          <Card title="提现" className="rg-glass-card">
             <Form
               form={withdrawForm}
               layout="vertical"
@@ -452,14 +549,7 @@ export default function AccountPage() {
                       <Typography.Text>
                         Deadline: {formatDeadline(withdrawSignature.deadline, deadlineMode)}
                       </Typography.Text>
-                      <Button
-                        size="small"
-                        onClick={() =>
-                          setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))
-                        }
-                      >
-                        {deadlineMode === 'local' ? '看时间戳' : '看本地时间'}
-                      </Button>
+                      <Button size="small" icon={<SwapOutlined />} onClick={() => setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))} />
                     </Space>
                     <Typography.Text type="secondary">
                       UTC: {new Date(withdrawSignature.deadline).toISOString()}
@@ -470,6 +560,14 @@ export default function AccountPage() {
                     <Typography.Text copyable={{ text: withdrawSignature.signature }}>
                       Signature: {withdrawSignature.signature}
                     </Typography.Text>
+                    <Button
+                      type="primary"
+                      ghost={isDark}
+                      loading={executeWithdrawalMutation.isPending}
+                      onClick={() => executeWithdrawalMutation.mutate(withdrawSignature)}
+                    >
+                      钱包确认提现
+                    </Button>
                   </Space>
                 }
               />
@@ -479,7 +577,16 @@ export default function AccountPage() {
       </Row>
 
       {authenticated ? (
-        <Card style={{ marginTop: 24 }} title="充值记录">
+        depositsQuery.isError ? (
+          <Alert
+            style={{ marginTop: 24 }}
+            type="error"
+            showIcon
+            message="充值记录加载失败"
+            description="请检查后端服务是否已重启到最新版本，且 `/api/v1/deposits` 路由可用。"
+          />
+        ) : (
+        <Card style={{ marginTop: 24 }} title="充值记录" className="rg-glass-card">
           <Table
             rowKey={(record) => `${record.tx_hash}-${record.log_index}`}
             loading={depositsQuery.isLoading}
@@ -489,10 +596,20 @@ export default function AccountPage() {
             scroll={{ x: 960 }}
           />
         </Card>
+        )
       ) : null}
 
       {authenticated ? (
-        <Card style={{ marginTop: 24 }} title="提现记录">
+        withdrawalsQuery.isError ? (
+          <Alert
+            style={{ marginTop: 24 }}
+            type="error"
+            showIcon
+            message="提现记录加载失败"
+            description="请检查后端服务状态和当前登录 token 是否有效。"
+          />
+        ) : (
+        <Card style={{ marginTop: 24 }} title="提现记录" className="rg-glass-card">
           <Table
             rowKey="request_id"
             loading={withdrawalsQuery.isLoading}
@@ -502,6 +619,7 @@ export default function AccountPage() {
             scroll={{ x: 960 }}
           />
         </Card>
+        )
       ) : null}
     </div>
   )
