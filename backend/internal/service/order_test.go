@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/AboAuther/RGPerp/backend/internal/model"
+	apperr "github.com/AboAuther/RGPerp/backend/internal/pkg/errors"
 )
 
 func TestOrderService_ReduceOnlyClose(t *testing.T) {
@@ -89,6 +90,50 @@ func TestOrderService_CrossMarginAndMockHedge(t *testing.T) {
 	}
 	if hedgeOrder.Status != "mock_pending" {
 		t.Fatalf("unexpected hedge order status: %s", hedgeOrder.Status)
+	}
+}
+
+func TestOrderService_ReduceOnlyRiskBlocksIncreasingExposure(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if err := db.Model(&model.Account{}).Where("user_id = ?", 1).Updates(map[string]any{
+		"available_balance": decimal.Zero,
+		"locked_balance":    decimal.RequireFromString("0.5"),
+	}).Error; err != nil {
+		t.Fatalf("update account: %v", err)
+	}
+	if err := db.Create(&model.Position{
+		UserID:           1,
+		Symbol:           "BTC-PERP",
+		Side:             "long",
+		MarginMode:       "cross",
+		Size:             decimal.RequireFromString("0.001"),
+		EntryPrice:       decimal.RequireFromString("86000"),
+		MarkPrice:        decimal.RequireFromString("86000"),
+		LiquidationPrice: decimal.Zero,
+		Margin:           decimal.RequireFromString("0.5"),
+		Leverage:         10,
+		Status:           "open",
+	}).Error; err != nil {
+		t.Fatalf("create position: %v", err)
+	}
+
+	_, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "blocked-open",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "cross",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	})
+	if err == nil {
+		t.Fatal("expected reduce-only rejection")
+	}
+	if err != apperr.ErrReduceOnlyMode {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

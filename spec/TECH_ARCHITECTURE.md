@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | **前端** | React + Vite + TypeScript | 纯客户端 SPA |
 | **UI 组件库** | Ant Design (antd) | 成熟、组件完整、TypeScript 友好、适合数据密集型金融界面 |
-| **图表** | TradingView Lightweight Charts | K 线与价格曲线 |
+| **图表** | TradingView Advanced Chart Embed | 交易终端 K 线与技术指标 |
 | **Web3 交互** | wagmi + viem | 钱包连接、合约调用、签名 |
 | **状态管理** | zustand | 轻量、TS 友好、适合中等规模 SPA |
 | **数据请求** | TanStack Query (React Query) | 缓存、轮询、失效与重取 |
@@ -220,8 +220,11 @@ HYPERLIQUID_API_URL=https://api.hyperliquid-testnet.xyz
 HYPERLIQUID_WALLET_ADDRESS=0x...
 HYPERLIQUID_PRIVATE_KEY=0x...
 
+# --- Binance ---
+BINANCE_FUTURES_API_URL=https://fapi.binance.com
+
 # --- 价格 ---
-PRICE_SOURCE=hyperliquid
+PRICE_SOURCE=binance
 ```
 
 ```bash
@@ -260,8 +263,7 @@ typescript                          # 类型
 vite                                # 构建
 antd                                # UI 组件库
 @ant-design/icons                   # 图标
-@ant-design/charts                  # 图表 (可选)
-lightweight-charts                  # TradingView K 线
+react-tradingview-embed             # TradingView 图表嵌入
 wagmi                               # Web3 钱包
 viem                                # 链上交互
 @tanstack/react-query               # 数据请求

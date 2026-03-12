@@ -10,19 +10,27 @@ import (
 )
 
 type RiskState struct {
+	User                model.User
 	Account             model.Account
 	PendingWithdrawal   decimal.Decimal
 	AvailableBalance    decimal.Decimal
 	LockedBalance       decimal.Decimal
 	UnrealizedPnL       decimal.Decimal
 	Equity              decimal.Decimal
+	TotalInitial        decimal.Decimal
 	TotalMaintenance    decimal.Decimal
+	FreeCollateral      decimal.Decimal
 	WithdrawableBalance decimal.Decimal
 	MarginRatio         decimal.Decimal
 	RiskLevel           string
 }
 
 func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
+	var user model.User
+	if err := db.Where("id = ?", userID).First(&user).Error; err != nil {
+		return nil, err
+	}
+
 	var account model.Account
 	if err := db.Where("user_id = ?", userID).First(&account).Error; err != nil {
 		return nil, err
@@ -44,6 +52,7 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	}
 
 	unrealized := decimal.Zero
+	totalInitial := decimal.Zero
 	totalMaintenance := decimal.Zero
 	for _, pos := range positions {
 		markPrice := pos.MarkPrice
@@ -52,10 +61,17 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		if sym, ok := symbolMap[pos.Symbol]; ok {
 			maintenanceRate = sym.MaintenanceMarginRate
 		}
+		notional := markPrice.Mul(pos.Size)
+		initialMargin := pos.Margin
+		if pos.Leverage > 0 {
+			initialMargin = notional.Div(decimal.NewFromInt(int64(pos.Leverage))).Round(18)
+		}
+		totalInitial = totalInitial.Add(initialMargin)
 		totalMaintenance = totalMaintenance.Add(markPrice.Mul(pos.Size).Mul(maintenanceRate))
 	}
 
 	equity := account.AvailableBalance.Add(account.LockedBalance).Add(unrealized).Round(18)
+	freeCollateral := equity.Sub(totalInitial).Sub(pending)
 	marginRatio := decimal.Zero
 	if equity.GreaterThan(decimal.Zero) {
 		marginRatio = totalMaintenance.Div(equity).Mul(decimal.NewFromInt(100)).Round(6)
@@ -70,24 +86,71 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 
 	riskLevel := "normal"
 	switch {
+	case user.Status == "frozen":
+		riskLevel = "frozen"
 	case equity.LessThanOrEqual(totalMaintenance) || marginRatio.GreaterThanOrEqual(decimal.NewFromInt(100)):
-		riskLevel = "danger"
-	case marginRatio.GreaterThanOrEqual(decimal.NewFromInt(80)):
-		riskLevel = "warning"
+		riskLevel = "liquidating"
+	case marginRatio.GreaterThanOrEqual(decimal.NewFromInt(80)) || freeCollateral.LessThanOrEqual(decimal.Zero):
+		riskLevel = "reduce_only"
+	case marginRatio.GreaterThanOrEqual(decimal.NewFromInt(60)):
+		riskLevel = "at_risk"
 	}
 
 	return &RiskState{
+		User:                user,
 		Account:             account,
 		PendingWithdrawal:   pending,
 		AvailableBalance:    account.AvailableBalance,
 		LockedBalance:       account.LockedBalance,
 		UnrealizedPnL:       unrealized.Round(18),
 		Equity:              equity,
+		TotalInitial:        totalInitial.Round(18),
 		TotalMaintenance:    totalMaintenance.Round(18),
+		FreeCollateral:      freeCollateral.Round(18),
 		WithdrawableBalance: withdrawable.Round(18),
 		MarginRatio:         marginRatio,
 		RiskLevel:           riskLevel,
 	}, nil
+}
+
+func syncUserRiskStatus(db *gorm.DB, userID uint64) (*RiskState, error) {
+	return syncUserRiskStatusTx(db, userID)
+}
+
+func syncUserRiskStatusTx(tx *gorm.DB, userID uint64) (*RiskState, error) {
+	riskState, err := buildRiskState(tx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	targetStatus := riskState.RiskLevel
+	if targetStatus == "normal" {
+		targetStatus = "active"
+	}
+	if riskState.User.Status == "frozen" {
+		targetStatus = "frozen"
+	}
+
+	if riskState.User.Status != targetStatus {
+		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("status", targetStatus).Error; err != nil {
+			return nil, err
+		}
+		riskState.User.Status = targetStatus
+	}
+	return riskState, nil
+}
+
+func orderIncreasesExposure(existing *model.Position, side string, size decimal.Decimal, reduceOnly bool) bool {
+	if reduceOnly {
+		return false
+	}
+	if existing == nil {
+		return true
+	}
+	if existing.Side == side {
+		return true
+	}
+	return size.GreaterThan(existing.Size)
 }
 
 func loadRiskSymbols(db *gorm.DB, positions []model.Position) (map[string]model.Symbol, error) {

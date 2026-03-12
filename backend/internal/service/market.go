@@ -302,6 +302,27 @@ func (s *MarketService) GetKlines(symbol, interval string, startTime, endTime ti
 		return []KlineOutput{}, nil
 	}
 
+	tradeQuery := s.db.Model(&model.Trade{}).Select("size, price, created_at").Where("symbol = ?", symbol)
+	if !startTime.IsZero() {
+		tradeQuery = tradeQuery.Where("created_at >= ?", startTime.UTC())
+	}
+	if !endTime.IsZero() {
+		tradeQuery = tradeQuery.Where("created_at <= ?", endTime.UTC())
+	}
+	var trades []model.Trade
+	_ = tradeQuery.Order("created_at asc").Find(&trades).Error
+
+	tradeVolMap := make(map[int64]decimal.Decimal)
+	for _, trade := range trades {
+		ts := trade.CreatedAt.UTC().Truncate(bucketSize).Unix()
+		notional := trade.Size.Mul(trade.Price)
+		if v, ok := tradeVolMap[ts]; ok {
+			tradeVolMap[ts] = v.Add(notional)
+		} else {
+			tradeVolMap[ts] = notional
+		}
+	}
+
 	type klineBucket struct {
 		time   int64
 		open   decimal.Decimal
@@ -319,25 +340,29 @@ func (s *MarketService) GetKlines(symbol, interval string, startTime, endTime ti
 		b, exists := buckets[ts]
 		if !exists {
 			b = &klineBucket{
-				time:   ts,
-				open:   price,
-				high:   price,
-				low:    price,
-				close:  price,
-				volume: decimal.NewFromInt(1),
+				time:  ts,
+				open:  price,
+				high:  price,
+				low:   price,
+				close: price,
 			}
 			buckets[ts] = b
 			order = append(order, ts)
-			continue
+		} else {
+			if price.GreaterThan(b.high) {
+				b.high = price
+			}
+			if price.LessThan(b.low) {
+				b.low = price
+			}
+			b.close = price
 		}
-		if price.GreaterThan(b.high) {
-			b.high = price
+	}
+
+	for ts, b := range buckets {
+		if vol, ok := tradeVolMap[ts]; ok {
+			b.volume = vol
 		}
-		if price.LessThan(b.low) {
-			b.low = price
-		}
-		b.close = price
-		b.volume = b.volume.Add(decimal.NewFromInt(1))
 	}
 
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })

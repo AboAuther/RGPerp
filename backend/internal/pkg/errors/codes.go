@@ -45,6 +45,8 @@ var (
 	ErrMaxPositionExceeded  = New(http.StatusBadRequest, 30005, "max position notional exceeded")
 	ErrOrderRejected        = New(http.StatusBadRequest, 30006, "order rejected by risk check")
 	ErrDuplicateClientOrder = New(http.StatusConflict, 30007, "duplicate client order id")
+	ErrReduceOnlyMode       = New(http.StatusBadRequest, 30008, "account is in reduce-only mode")
+	ErrAccountLiquidating   = New(http.StatusForbidden, 30009, "account is being liquidated")
 )
 
 // Position errors (40xxx)
@@ -62,8 +64,10 @@ var (
 
 // System errors (90xxx)
 var (
-	ErrPriceUnavailable = New(http.StatusServiceUnavailable, 90004, "price unavailable")
 	ErrInternal         = New(http.StatusInternalServerError, 90001, "internal server error")
 	ErrBadRequest       = New(http.StatusBadRequest, 90002, "bad request")
 	ErrRateLimit        = New(http.StatusTooManyRequests, 90003, "rate limit exceeded")
+	ErrPriceUnavailable = New(http.StatusServiceUnavailable, 90004, "price unavailable")
+	ErrPriceStale       = New(http.StatusServiceUnavailable, 90005, "price data is stale")
+	ErrConcurrentUpdate = New(http.StatusConflict, 90006, "concurrent update conflict, please retry")
 )

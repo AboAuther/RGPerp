@@ -2,14 +2,14 @@
 
 链上托管、链下交易、外部对冲的永续合约交易系统。
 
-系统覆盖完整交易闭环：钱包登录 → 充值 → 开仓 / 加仓 / 减仓 / 平仓 → 风控 / 清算 → Hyperliquid 对冲 → 提现。
+系统覆盖完整交易闭环：钱包登录 → 充值 → 开仓 / 加仓 / 减仓 / 平仓 / 反手 → 账户风险计算 → mock 对冲任务生成 → 提现。
 
 ## 技术栈
 
 | 层级 | 选型 |
 | --- | --- |
 | 前端 | React + Vite + TypeScript + Ant Design |
-| 图表 | TradingView Lightweight Charts |
+| 图表 | TradingView Advanced Chart Embed |
 | Web3 | wagmi + viem |
 | 状态管理 | zustand + TanStack Query |
 | 后端 | Go + Gin + GORM |
@@ -123,28 +123,28 @@ flowchart TD
     PRICE --> HL
 ```
 
-系统采用链上托管 + 链下交易 + 外部对冲的三层架构。Vault 合约负责资金托管；交易引擎、风控、清算在链下执行；净敞口通过 Hyperliquid 对冲。
+系统采用链上托管 + 链下交易 + 外部对冲的三层架构。Vault 合约负责资金托管；交易引擎、风控、清算在链下执行；净敞口对冲当前以 mock adapter 演示，后续切换至 Hyperliquid。
 
 ## 关键设计决策
 
-**交易模型** — 采用 CFD 模式。用户订单与平台资金池即时成交，平台净风险敞口通过 Hyperliquid 转移。数据模型按多 symbol 设计，首发 BTC-PERP。
+**交易模型** — 采用 CFD 模式。用户订单与平台资金池即时成交，平台净风险敞口后续通过外部对冲转移。数据模型按多 symbol 设计，当前已支持 `BTC/USDC`、`ETH/USDC`、`SOL/USDC`。
 
-**价格源** — 主行情源为 Hyperliquid `allMids / candleSnapshot`，与对冲执行环境一致。系统支持 mock 模式和第三方 API 作为兜底源。Price Service 输出 `index_price`、`mark_price`、`execution_price` 三层价格。
+**价格源** — 当前头部交易价格使用 Binance USDⓈ-M `premiumIndex`，输出 `mark_price`、`index_price`、`funding_rate` 与 `funding_next_at`；图表使用 TradingView 的 Binance 永续市场数据。系统同时保留 `mock`、`hyperliquid` 与链上 `oracle` 价格源接口，便于后续切换。
 
-**对冲策略** — 按交易所净敞口统一对冲，而非逐笔用户订单对冲。Hedger 以 symbol 为粒度计算目标净头寸，将外部仓位调整至目标值。支持对冲阈值、批量净额、熔断与自动 reduce-only 降级。
+**对冲策略** — 按交易所净敞口统一对冲，而非逐笔用户订单对冲。当前已实现 hedge task 生成、hedger 进程和 mock adapter；Hyperliquid adapter 已完成结构拆分，真实签名与正式下单作为下一阶段重点。
 
 **提现模型** — 后端签名授权提现。用户发起提现请求后，后端校验可用余额、仓位风险和风控状态，生成签名后由用户调用合约执行。
 
-**清算机制** — 独立 Liquidation Service 持续扫描风险账户。当 equity 低于维持保证金时触发，支持部分清算与全量强平两级策略，清算后自动同步对冲仓位。
+**清算机制** — 当前已实现账户权益、维持保证金、风险率与提现前风险校验；独立 Liquidation Service 与强平执行链路属于下一阶段主线。
 
 **风控体系** — 覆盖交易前（保证金、杠杆、限仓、价格有效性）、持仓中（风险率、维持保证金、对冲偏差）、提现前（余额、冻结状态、限额）三个维度。
 
 ## 已知约束
 
-- 首发标的为 BTC-PERP，架构与 schema 支持多 symbol 扩展
-- 当前订单类型为 Market Order，限价单与条件单作为后续迭代
-- Hyperliquid 外部依赖具备重试和降级策略，但极端情况下仍存在短时对冲延迟
-- 保险基金、自动减仓（ADL）、资金费率（Funding Rate）属后续迭代范围
+- 当前已支持 `BTC/USDC`、`ETH/USDC`、`SOL/USDC` 三个交易对展示与交易，更多 symbol 可按 schema 继续扩展
+- 当前订单类型为 Market Order，限价单、撤单与条件单作为后续迭代
+- Hyperliquid 真实签名下单尚未接通，当前对冲执行为 mock adapter
+- 独立清算服务、保险基金动用、自动减仓（ADL）仍属后续阶段
 
 ## 文档索引
 

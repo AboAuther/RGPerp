@@ -8,8 +8,8 @@ RGPerp 采用链上资金托管、链下账户与交易、外部流动性对冲�
 
 - 用户资产由链上 Vault 合约托管，出入金以链上事件为结算依据
 - 交易执行、仓位管理、风控与清算在链下完成
-- 平台净风险敞口通过 Hyperliquid Testnet 对冲
-- 所有模块按多 symbol 设计，首发 BTC-PERP
+- 平台净风险敞口通过对冲层统一处理，当前以 mock hedger 演示，后续切换 Hyperliquid Testnet
+- 所有模块按多 symbol 设计，当前已支持 `BTC/USDC`、`ETH/USDC`、`SOL/USDC`
 
 ## 2. 顶层架构
 
@@ -46,7 +46,7 @@ flowchart TD
 
     subgraph External
         HL[Hyperliquid Testnet]
-        ORACLE[Backup Price Sources]
+        ORACLE[Oracle / Binance Price Sources]
     end
 
     U --> FE
@@ -96,7 +96,7 @@ flowchart TD
 
 - 钱包连接与签名登录
 - K 线与行情展示
-- 下单面板（市价单、杠杆、保证金）
+- 下单面板（市价单、杠杆、逐仓 / 全仓、部分平仓）
 - 余额、仓位、PnL、风险率展示
 - 充值、提现、订单历史、对冲状态可视化
 
@@ -156,7 +156,7 @@ flowchart TD
 4. 更新仓位（开仓 / 加仓 / 减仓 / 反手 / 平仓）
 5. 计算手续费、均价、已实现盈亏
 6. 写审计流水
-7. 通过 MQ 推送对冲任务
+7. 生成 hedge task，并由 Hedger 异步处理
 
 ### 3.8 Risk Engine
 
@@ -214,6 +214,12 @@ flowchart TD
 - `drift = internal_net_position - external_hedge_position`
 
 目标：使 drift 趋近 0。
+
+当前状态：
+
+- 已实现 hedge task / hedge order 数据流
+- 已实现 `mock` adapter 与独立 hedger 进程
+- 已拆分 `hyperliquid` adapter 结构，真实签名与正式下单仍待接通
 
 触发方式：交易后即时触发 + 周期定时校正。
 

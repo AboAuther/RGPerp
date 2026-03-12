@@ -170,7 +170,16 @@ func (p *Processor) processWithdraw(ctx context.Context, vLog gethtypes.Log) err
 			return err
 		}
 
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+			return err
+		}
+
 		before := account.AvailableBalance
+		if account.AvailableBalance.LessThan(amount) {
+			return fmt.Errorf("withdrawal amount %s exceeds available balance %s for user %s",
+				amount.String(), account.AvailableBalance.String(), userAddress)
+		}
 		account.AvailableBalance = account.AvailableBalance.Sub(amount)
 		if err := tx.Save(&account).Error; err != nil {
 			return err

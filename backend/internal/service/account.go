@@ -44,7 +44,7 @@ func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
 		return nil, err
 	}
 
-	riskState, err := buildRiskState(s.db, userID)
+	riskState, err := syncUserRiskStatus(s.db, userID)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperr.ErrAccountNotFound

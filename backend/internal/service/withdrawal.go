@@ -51,7 +51,7 @@ func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutp
 		return nil, apperr.ErrMinWithdrawalAmount
 	}
 
-	riskState, err := buildRiskState(s.db, input.UserID)
+	riskState, err := syncUserRiskStatus(s.db, input.UserID)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperr.ErrAccountNotFound
@@ -59,7 +59,7 @@ func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutp
 		return nil, err
 	}
 
-	if riskState.RiskLevel == "danger" {
+	if riskState.RiskLevel == "liquidating" || riskState.RiskLevel == "frozen" {
 		return nil, apperr.ErrWithdrawalRiskCheck
 	}
 	if riskState.WithdrawableBalance.LessThan(input.Amount) {
