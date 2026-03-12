@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build
+frontend/dist/
+backend/bin/
+
+# Environment
+.env
+.env.local
+backend/.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Foundry
+contracts/out/
+contracts/cache/
+
+# Logs
+*.log
+
+# Docker volumes
+mysql_data/
+redis_data/
+rabbitmq_data/
