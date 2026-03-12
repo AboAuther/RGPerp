@@ -107,3 +107,35 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	}
 	response.OK(c, items)
 }
+
+func (h *OrderHandler) ListOpenOrders(c *gin.Context) {
+	userIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.FailWithMsg(c, http.StatusUnauthorized, 10004, "unauthorized")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	items, err := h.orderService.ListOpenOrders(userIDValue.(uint64), limit)
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, items)
+}
+
+func (h *OrderHandler) ListTrades(c *gin.Context) {
+	userIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.FailWithMsg(c, http.StatusUnauthorized, 10004, "unauthorized")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	items, err := h.orderService.ListTrades(userIDValue.(uint64), limit)
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, items)
+}

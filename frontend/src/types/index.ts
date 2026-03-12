@@ -81,6 +81,19 @@ export interface OrderHistoryItem {
   created_at: string
 }
 
+export interface TradeHistoryItem {
+  id: number
+  order_id: number
+  symbol: string
+  side: 'long' | 'short'
+  size: string
+  price: string
+  fee: string
+  realized_pnl: string
+  is_liquidation: boolean
+  created_at: string
+}
+
 export interface OrderExecution {
   order: Order
   position?: Position
@@ -131,6 +144,16 @@ export interface MarketTicker {
   best_ask: string
   source: string
   timestamp: number
+  change_24h: string
+  change_24h_pct: string
+  volume_24h: string
+  open_interest: string
+  funding_rate: string
+  funding_next_at: number
+  max_leverage: number
+  display_pair: string
+  base_asset: string
+  quote_asset: string
 }
 
 export interface KlineItem {
@@ -170,11 +193,12 @@ export interface WithdrawalRequest {
   request_id: string
   amount: string
   status: string
-  nonce: number
+  nonce: string
   signature: string
   deadline: string
   tx_hash?: string
   created_at: string
+  rejection_reason?: string
 }
 
 export interface DepositRecord {

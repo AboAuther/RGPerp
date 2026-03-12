@@ -75,6 +75,19 @@ type OrderListItem struct {
 	CreatedAt     string          `json:"created_at"`
 }
 
+type TradeListItem struct {
+	ID            uint64          `json:"id"`
+	OrderID       uint64          `json:"order_id"`
+	Symbol        string          `json:"symbol"`
+	Side          string          `json:"side"`
+	Size          decimal.Decimal `json:"size"`
+	Price         decimal.Decimal `json:"price"`
+	Fee           decimal.Decimal `json:"fee"`
+	RealizedPnL   decimal.Decimal `json:"realized_pnl"`
+	IsLiquidation bool            `json:"is_liquidation"`
+	CreatedAt     string          `json:"created_at"`
+}
+
 func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, error) {
 	input.Symbol = strings.ToUpper(strings.TrimSpace(input.Symbol))
 	input.Side = strings.ToLower(strings.TrimSpace(input.Side))
@@ -464,6 +477,75 @@ func (s *OrderService) ListOrders(userID uint64, limit int) ([]OrderListItem, er
 			Fee:           order.Fee,
 			RealizedPnL:   order.RealizedPnL,
 			CreatedAt:     order.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return items, nil
+}
+
+func (s *OrderService) ListOpenOrders(userID uint64, limit int) ([]OrderListItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var orders []model.Order
+	if err := s.db.Where("user_id = ? AND status IN ?", userID, []string{"open", "pending", "partially_filled"}).
+		Order("created_at desc").
+		Limit(limit).
+		Find(&orders).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]OrderListItem, 0, len(orders))
+	for _, order := range orders {
+		items = append(items, OrderListItem{
+			ID:            order.ID,
+			ClientOrderID: order.ClientOrderID,
+			Symbol:        order.Symbol,
+			Side:          order.Side,
+			Type:          order.Type,
+			Size:          order.Size,
+			ExecPrice:     order.ExecPrice,
+			Leverage:      order.Leverage,
+			Margin:        order.Margin,
+			ReduceOnly:    order.ReduceOnly,
+			Status:        order.Status,
+			Fee:           order.Fee,
+			RealizedPnL:   order.RealizedPnL,
+			CreatedAt:     order.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return items, nil
+}
+
+func (s *OrderService) ListTrades(userID uint64, limit int) ([]TradeListItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var trades []model.Trade
+	if err := s.db.Where("user_id = ?", userID).Order("created_at desc").Limit(limit).Find(&trades).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]TradeListItem, 0, len(trades))
+	for _, trade := range trades {
+		items = append(items, TradeListItem{
+			ID:            trade.ID,
+			OrderID:       trade.OrderID,
+			Symbol:        trade.Symbol,
+			Side:          trade.Side,
+			Size:          trade.Size,
+			Price:         trade.Price,
+			Fee:           trade.Fee,
+			RealizedPnL:   trade.RealizedPnL,
+			IsLiquidation: trade.IsLiquidation,
+			CreatedAt:     trade.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	return items, nil

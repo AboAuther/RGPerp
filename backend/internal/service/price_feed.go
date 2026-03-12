@@ -174,6 +174,8 @@ func defaultMockPrice(symbol string) decimal.Decimal {
 		return decimal.NewFromInt(85000)
 	case "ETH-PERP":
 		return decimal.NewFromInt(3000)
+	case "SOL-PERP":
+		return decimal.NewFromInt(140)
 	default:
 		return decimal.NewFromInt(100)
 	}

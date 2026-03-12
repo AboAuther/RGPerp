@@ -415,7 +415,19 @@ export default function AccountPage() {
       }, 3000)
     },
     onError: (error) => {
-      void messageApi.error(error instanceof Error ? error.message : '提现执行失败')
+      const raw = error instanceof Error ? error.message : '提现执行失败'
+      let friendly = raw
+      if (raw.includes('InvalidSignature')) {
+        friendly = '提现授权无效。请重新生成最新授权后再发起提现。'
+      } else if (raw.includes('DeadlineExpired')) {
+        friendly = '提现授权已过期，请重新生成。'
+      } else if (raw.includes('NonceAlreadyUsed')) {
+        friendly = '这笔提现授权已经使用过了，请刷新记录。'
+      } else if (raw.includes('transaction reverted on chain')) {
+        friendly = '提现交易在链上执行失败，请重新生成授权后重试。'
+      }
+      void messageApi.error(friendly)
+      queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
     },
   })
 
@@ -457,6 +469,7 @@ export default function AccountPage() {
               type="primary"
               ghost={isDark}
               loading={executeWithdrawalMutation.isPending}
+              disabled={new Date(record.deadline).getTime() <= Date.now()}
               onClick={() => executeWithdrawalMutation.mutate(record)}
             >
               钱包提现
@@ -598,9 +611,9 @@ export default function AccountPage() {
               </Button>
             </Form>
             {depositHint ? (
-              <Alert style={{ marginTop: 'auto' }} type="info" showIcon message={depositHint} />
+              <Alert style={{ marginTop: 16 }} type="info" showIcon message={depositHint} />
             ) : (
-              <div style={{ marginTop: 'auto', minHeight: 52 }} />
+              <div style={{ marginTop: 16, minHeight: 52 }} />
             )}
           </Card>
         </Col>
@@ -627,6 +640,12 @@ export default function AccountPage() {
                 生成提现授权
               </Button>
             </Form>
+
+            <Alert
+              type="info"
+              showIcon
+              message="先生成最新授权，再通过钱包确认发起链上提现。"
+            />
 
             {withdrawSignature ? (
               <div
@@ -670,9 +689,7 @@ export default function AccountPage() {
               </div>
             ) : null}
             <Divider style={{ margin: 0 }} />
-            <Typography.Text type="secondary" style={{ marginTop: 'auto' }}>
-              先生成授权，再通过钱包确认发起链上提现。
-            </Typography.Text>
+            <div style={{ marginTop: 'auto' }} />
           </Card>
         </Col>
       </Row>

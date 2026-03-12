@@ -74,5 +74,5 @@ func (h *WithdrawalHandler) List(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, gin.H{"items": items})
+	response.OK(c, gin.H{"items": service.BuildWithdrawalList(items)})
 }

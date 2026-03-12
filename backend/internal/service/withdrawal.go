@@ -34,7 +34,7 @@ type WithdrawalOutput struct {
 	RequestID    string          `json:"request_id"`
 	Asset        string          `json:"asset"`
 	Amount       decimal.Decimal `json:"amount"`
-	Nonce        uint64          `json:"nonce"`
+	Nonce        string          `json:"nonce"`
 	Deadline     time.Time       `json:"deadline"`
 	Signature    string          `json:"signature"`
 	VaultAddress string          `json:"vault_address"`
@@ -76,7 +76,7 @@ func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutp
 				RequestID:    existing.RequestID,
 				Asset:        "USDC",
 				Amount:       existing.Amount,
-				Nonce:        existing.Nonce,
+				Nonce:        fmt.Sprintf("%d", existing.Nonce),
 				Deadline:     existing.Deadline,
 				Signature:    existing.Signature,
 				VaultAddress: s.cfg.Blockchain.VaultAddress,
@@ -132,7 +132,7 @@ func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutp
 		RequestID:    requestID,
 		Asset:        "USDC",
 		Amount:       input.Amount,
-		Nonce:        nonce,
+		Nonce:        fmt.Sprintf("%d", nonce),
 		Deadline:     deadline,
 		Signature:    signature,
 		VaultAddress: s.cfg.Blockchain.VaultAddress,
@@ -151,6 +151,36 @@ func (s *WithdrawalService) List(userID uint64) ([]model.WithdrawalRequest, erro
 		return nil, err
 	}
 	return requests, nil
+}
+
+type WithdrawalListItem struct {
+	RequestID       string          `json:"request_id"`
+	Amount          decimal.Decimal `json:"amount"`
+	Status          string          `json:"status"`
+	TxHash          string          `json:"tx_hash"`
+	Nonce           string          `json:"nonce"`
+	Signature       string          `json:"signature"`
+	Deadline        time.Time       `json:"deadline"`
+	CreatedAt       time.Time       `json:"created_at"`
+	RejectionReason string          `json:"rejection_reason"`
+}
+
+func BuildWithdrawalList(items []model.WithdrawalRequest) []WithdrawalListItem {
+	out := make([]WithdrawalListItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, WithdrawalListItem{
+			RequestID:       item.RequestID,
+			Amount:          item.Amount,
+			Status:          item.Status,
+			TxHash:          item.TxHash,
+			Nonce:           fmt.Sprintf("%d", item.Nonce),
+			Signature:       item.Signature,
+			Deadline:        item.Deadline,
+			CreatedAt:       item.CreatedAt,
+			RejectionReason: item.RejectionReason,
+		})
+	}
+	return out
 }
 
 func randomUint64() (uint64, error) {

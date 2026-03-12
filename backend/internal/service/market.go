@@ -37,13 +37,23 @@ type MarketOutput struct {
 }
 
 type TickerOutput struct {
-	Symbol     string          `json:"symbol"`
-	MarkPrice  decimal.Decimal `json:"mark_price"`
-	IndexPrice decimal.Decimal `json:"index_price"`
-	BestBid    decimal.Decimal `json:"best_bid"`
-	BestAsk    decimal.Decimal `json:"best_ask"`
-	Source     string          `json:"source"`
-	Timestamp  int64           `json:"timestamp"`
+	Symbol        string          `json:"symbol"`
+	MarkPrice     decimal.Decimal `json:"mark_price"`
+	IndexPrice    decimal.Decimal `json:"index_price"`
+	BestBid       decimal.Decimal `json:"best_bid"`
+	BestAsk       decimal.Decimal `json:"best_ask"`
+	Source        string          `json:"source"`
+	Timestamp     int64           `json:"timestamp"`
+	Change24H     decimal.Decimal `json:"change_24h"`
+	Change24HPct  decimal.Decimal `json:"change_24h_pct"`
+	Volume24H     decimal.Decimal `json:"volume_24h"`
+	OpenInterest  decimal.Decimal `json:"open_interest"`
+	FundingRate   decimal.Decimal `json:"funding_rate"`
+	FundingNextAt int64           `json:"funding_next_at"`
+	MaxLeverage   uint32          `json:"max_leverage"`
+	DisplayPair   string          `json:"display_pair"`
+	BaseAsset     string          `json:"base_asset"`
+	QuoteAsset    string          `json:"quote_asset"`
 }
 
 type KlineOutput struct {
@@ -108,14 +118,94 @@ func (s *MarketService) GetTicker(symbol string) (*TickerOutput, error) {
 		indexPrice = tick.MarkPrice
 	}
 
+	stats, err := s.buildTickerStats(symbol, tick.MarkPrice, indexPrice)
+	if err != nil {
+		return nil, err
+	}
+
 	return &TickerOutput{
-		Symbol:     symbol,
-		MarkPrice:  tick.MarkPrice,
-		IndexPrice: indexPrice,
-		BestBid:    tick.BestBid,
-		BestAsk:    tick.BestAsk,
-		Source:     tick.Source,
-		Timestamp:  tick.CreatedAt.UTC().Unix(),
+		Symbol:        symbol,
+		MarkPrice:     tick.MarkPrice,
+		IndexPrice:    indexPrice,
+		BestBid:       tick.BestBid,
+		BestAsk:       tick.BestAsk,
+		Source:        tick.Source,
+		Timestamp:     tick.CreatedAt.UTC().Unix(),
+		Change24H:     stats.Change24H,
+		Change24HPct:  stats.Change24HPct,
+		Volume24H:     stats.Volume24H,
+		OpenInterest:  stats.OpenInterest,
+		FundingRate:   stats.FundingRate,
+		FundingNextAt: stats.FundingNextAt.UTC().Unix(),
+		MaxLeverage:   symbolRow.MaxLeverage,
+		DisplayPair:   fmt.Sprintf("%s/%s", symbolRow.BaseAsset, symbolRow.QuoteAsset),
+		BaseAsset:     symbolRow.BaseAsset,
+		QuoteAsset:    symbolRow.QuoteAsset,
+	}, nil
+}
+
+type tickerStats struct {
+	Change24H     decimal.Decimal
+	Change24HPct  decimal.Decimal
+	Volume24H     decimal.Decimal
+	OpenInterest  decimal.Decimal
+	FundingRate   decimal.Decimal
+	FundingNextAt time.Time
+}
+
+func (s *MarketService) buildTickerStats(symbol string, markPrice, indexPrice decimal.Decimal) (*tickerStats, error) {
+	windowStart := time.Now().UTC().Add(-24 * time.Hour)
+
+	var firstTick model.PriceTick
+	if err := s.db.Where("symbol = ? AND created_at >= ?", symbol, windowStart).Order("created_at asc").First(&firstTick).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if err := s.db.Where("symbol = ?", symbol).Order("created_at asc").First(&firstTick).Error; err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+
+	change24H := decimal.Zero
+	change24HPct := decimal.Zero
+	if firstTick.MarkPrice.GreaterThan(decimal.Zero) {
+		change24H = markPrice.Sub(firstTick.MarkPrice).Round(6)
+		change24HPct = change24H.Div(firstTick.MarkPrice).Mul(decimal.NewFromInt(100)).Round(4)
+	}
+
+	var trades []model.Trade
+	if err := s.db.Select("size", "price").Where("symbol = ? AND created_at >= ?", symbol, windowStart).Find(&trades).Error; err != nil {
+		return nil, err
+	}
+	volume24H := decimal.Zero
+	for _, trade := range trades {
+		volume24H = volume24H.Add(trade.Size.Mul(trade.Price))
+	}
+
+	var positions []model.Position
+	if err := s.db.Select("size").Where("symbol = ? AND status = ?", symbol, "open").Find(&positions).Error; err != nil {
+		return nil, err
+	}
+	openInterest := decimal.Zero
+	for _, position := range positions {
+		openInterest = openInterest.Add(position.Size.Abs().Mul(markPrice))
+	}
+
+	fundingRate := decimal.Zero
+	if indexPrice.GreaterThan(decimal.Zero) {
+		fundingRate = markPrice.Sub(indexPrice).Div(indexPrice).Mul(decimal.RequireFromString("0.1")).Round(6)
+	}
+
+	now := time.Now().UTC()
+	fundingNextAt := now.Truncate(time.Hour).Add(time.Hour)
+
+	return &tickerStats{
+		Change24H:     change24H,
+		Change24HPct:  change24HPct,
+		Volume24H:     volume24H.Round(2),
+		OpenInterest:  openInterest.Round(2),
+		FundingRate:   fundingRate,
+		FundingNextAt: fundingNextAt,
 	}, nil
 }
 
