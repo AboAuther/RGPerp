@@ -15,6 +15,7 @@ import {
   message,
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { encodeFunctionData, parseUnits, toHex } from 'viem'
 import { post, get } from '../services/api'
 import { useAuthStore } from '../stores/authStore'
 import type {
@@ -33,12 +34,58 @@ declare global {
   }
 }
 
+type DeadlineMode = 'local' | 'unix'
+
+function deadlineUnix(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return String(Math.floor(date.getTime() / 1000))
+}
+
+function formatDeadline(value: string, mode: DeadlineMode): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  if (mode === 'unix') {
+    return deadlineUnix(value)
+  }
+  return date.toLocaleString()
+}
+
+function parseUsdcAmountToUnits(value: string): bigint {
+  return parseUnits(value, 6)
+}
+
+async function waitForTxReceipt(hash: string): Promise<void> {
+  if (!window.ethereum) {
+    throw new Error('wallet not found')
+  }
+  const timeoutAt = Date.now() + 120_000
+
+  while (Date.now() < timeoutAt) {
+    const receipt = await window.ethereum.request({
+      method: 'eth_getTransactionReceipt',
+      params: [hash],
+    })
+    if (receipt) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  throw new Error('transaction confirmation timeout')
+}
+
 export default function AccountPage() {
   const [withdrawForm] = Form.useForm()
+  const [depositForm] = Form.useForm()
   const queryClient = useQueryClient()
   const { token, walletAddress, setAuth, logout, isAuthenticated } = useAuthStore()
   const [messageApi, contextHolder] = message.useMessage()
   const [withdrawSignature, setWithdrawSignature] = useState<WithdrawalRequest | null>(null)
+  const [deadlineMode, setDeadlineMode] = useState<DeadlineMode>('local')
 
   const authenticated = isAuthenticated()
 
@@ -133,6 +180,106 @@ export default function AccountPage() {
     },
   })
 
+  const depositMutation = useMutation({
+    mutationFn: async (amount: string) => {
+      if (!window.ethereum) {
+        throw new Error('wallet not found')
+      }
+      const depositInfo = depositInfoQuery.data
+      if (!depositInfo?.usdc_address || !depositInfo?.vault_address) {
+        throw new Error('deposit config not ready')
+      }
+
+      const amountUnits = parseUsdcAmountToUnits(amount)
+      if (amountUnits <= 0n) {
+        throw new Error('invalid deposit amount')
+      }
+
+      const walletAccounts = (await window.ethereum.request({
+        method: 'eth_requestAccounts',
+      })) as string[]
+      const from = walletAccounts[0]
+      if (!from) {
+        throw new Error('wallet account not found')
+      }
+
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: toHex(Number(depositInfo.chain_id)) }],
+        })
+      } catch (_err) {
+        // Keep going. Some wallets do not support switch on local chains.
+      }
+
+      const approveData = encodeFunctionData({
+        abi: [
+          {
+            type: 'function',
+            name: 'approve',
+            stateMutability: 'nonpayable',
+            inputs: [
+              { name: 'spender', type: 'address' },
+              { name: 'amount', type: 'uint256' },
+            ],
+            outputs: [{ name: '', type: 'bool' }],
+          },
+        ],
+        functionName: 'approve',
+        args: [depositInfo.vault_address as `0x${string}`, amountUnits],
+      })
+
+      const approveTxHash = (await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [
+          {
+            from,
+            to: depositInfo.usdc_address,
+            data: approveData,
+          },
+        ],
+      })) as string
+      await waitForTxReceipt(approveTxHash)
+
+      const depositData = encodeFunctionData({
+        abi: [
+          {
+            type: 'function',
+            name: 'deposit',
+            stateMutability: 'nonpayable',
+            inputs: [{ name: 'amount', type: 'uint256' }],
+            outputs: [],
+          },
+        ],
+        functionName: 'deposit',
+        args: [amountUnits],
+      })
+      const depositTxHash = (await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [
+          {
+            from,
+            to: depositInfo.vault_address,
+            data: depositData,
+          },
+        ],
+      })) as string
+      await waitForTxReceipt(depositTxHash)
+      return { approveTxHash, depositTxHash }
+    },
+    onSuccess: (result) => {
+      depositForm.resetFields()
+      void messageApi.success(`充值交易已上链: ${result.depositTxHash}`)
+      queryClient.invalidateQueries({ queryKey: ['account'] })
+      setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ['account'] })
+      }, 6000)
+    },
+    onError: (error) => {
+      void messageApi.error(error instanceof Error ? error.message : '充值失败')
+    },
+  })
+
   const withdrawalColumns = useMemo(
     () => [
       { title: '请求 ID', dataIndex: 'request_id', key: 'request_id' },
@@ -144,10 +291,27 @@ export default function AccountPage() {
         render: (status: string) => <Tag color={status === 'confirmed' ? 'green' : 'blue'}>{status}</Tag>,
       },
       { title: 'Nonce', dataIndex: 'nonce', key: 'nonce' },
-      { title: '截止时间', dataIndex: 'deadline', key: 'deadline' },
+      {
+        title: '截止时间',
+        dataIndex: 'deadline',
+        key: 'deadline',
+        render: (value: string) => (
+          <Space size={8}>
+            <Typography.Text>{formatDeadline(value, deadlineMode)}</Typography.Text>
+            <Button
+              size="small"
+              onClick={() =>
+                setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))
+              }
+            >
+              {deadlineMode === 'local' ? '看时间戳' : '看本地时间'}
+            </Button>
+          </Space>
+        ),
+      },
       { title: '链上 Tx', dataIndex: 'tx_hash', key: 'tx_hash', render: (value?: string) => value || '-' },
     ],
-    [],
+    [deadlineMode],
   )
 
   return (
@@ -190,11 +354,28 @@ export default function AccountPage() {
               <Descriptions.Item label="Vault">{depositInfoQuery.data?.vault_address ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="USDC">{depositInfoQuery.data?.usdc_address ?? '-'}</Descriptions.Item>
             </Descriptions>
+            <Form
+              form={depositForm}
+              layout="vertical"
+              style={{ marginTop: 16 }}
+              onFinish={(values: { amount: string }) => depositMutation.mutate(values.amount)}
+            >
+              <Form.Item
+                label="充值金额 (USDC)"
+                name="amount"
+                rules={[{ required: true, message: '请输入充值金额' }]}
+              >
+                <Input placeholder="例如 10" />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" loading={depositMutation.isPending}>
+                MetaMask 充值 (approve + deposit)
+              </Button>
+            </Form>
             <Alert
               style={{ marginTop: 16 }}
               type="info"
               showIcon
-              message="本地联调阶段建议先用脚本完成 mint / approve / deposit，再由 indexer 入账。"
+              message="充值上链后，indexer 入账通常需要 3-6 秒，请稍后刷新余额。"
             />
           </Card>
         </Col>
@@ -227,7 +408,25 @@ export default function AccountPage() {
                   <Space direction="vertical" size={4}>
                     <Typography.Text>Request ID: {withdrawSignature.request_id}</Typography.Text>
                     <Typography.Text>Nonce: {withdrawSignature.nonce}</Typography.Text>
-                    <Typography.Text>Deadline: {withdrawSignature.deadline}</Typography.Text>
+                    <Space>
+                      <Typography.Text>
+                        Deadline: {formatDeadline(withdrawSignature.deadline, deadlineMode)}
+                      </Typography.Text>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))
+                        }
+                      >
+                        {deadlineMode === 'local' ? '看时间戳' : '看本地时间'}
+                      </Button>
+                    </Space>
+                    <Typography.Text type="secondary">
+                      UTC: {new Date(withdrawSignature.deadline).toISOString()}
+                    </Typography.Text>
+                    <Typography.Text type="secondary">
+                      Unix: {deadlineUnix(withdrawSignature.deadline)}
+                    </Typography.Text>
                     <Typography.Text copyable={{ text: withdrawSignature.signature }}>
                       Signature: {withdrawSignature.signature}
                     </Typography.Text>

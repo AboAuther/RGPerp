@@ -22,17 +22,21 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authSvc := service.NewAuthService(db, cfg)
 	accountSvc := service.NewAccountService(db)
 	withdrawalSvc := service.NewWithdrawalService(db, cfg)
+	marketSvc := service.NewMarketService(db)
 
 	authH := handler.NewAuthHandler(authSvc)
 	accountH := handler.NewAccountHandler(accountSvc)
 	walletH := handler.NewWalletHandler(cfg)
 	withdrawalH := handler.NewWithdrawalHandler(withdrawalSvc)
+	marketH := handler.NewMarketHandler(marketSvc)
 
 	r.GET("/health", healthH.Health)
 
 	v1 := r.Group("/api/v1")
 	v1.POST("/auth/challenge", authH.Challenge)
 	v1.POST("/auth/login", authH.Login)
+	v1.GET("/markets", marketH.List)
+	v1.GET("/markets/:symbol/ticker", marketH.Ticker)
 
 	authenticated := v1.Group("/")
 	authenticated.Use(middleware.Auth(cfg.JWT.Secret))

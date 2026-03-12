@@ -99,11 +99,15 @@ func (l *Listener) sync(ctx context.Context) error {
 		return fmt.Errorf("filter logs: %w", err)
 	}
 
+	var firstFailedBlock uint64
 	for _, vLog := range logs {
 		if len(vLog.Topics) == 0 {
 			continue
 		}
 		if err := l.processor.ProcessLog(ctx, vLog); err != nil {
+			if firstFailedBlock == 0 || vLog.BlockNumber < firstFailedBlock {
+				firstFailedBlock = vLog.BlockNumber
+			}
 			l.logger.Warn("process vault log failed",
 				zap.Error(err),
 				zap.String("tx_hash", vLog.TxHash.Hex()),
@@ -111,12 +115,23 @@ func (l *Listener) sync(ctx context.Context) error {
 			)
 			continue
 		}
-		l.lastProcessed = vLog.BlockNumber
 	}
 
 	if len(logs) == 0 {
 		l.lastProcessed = latest
+		return nil
 	}
+
+	if firstFailedBlock > 0 {
+		// Rewind to the previous block so failed logs are retried in the next poll.
+		// Dedup on (tx_hash, log_index) keeps already-processed events idempotent.
+		if firstFailedBlock > 0 {
+			l.lastProcessed = firstFailedBlock - 1
+		}
+		return fmt.Errorf("vault log processing failed at block %d", firstFailedBlock)
+	}
+
+	l.lastProcessed = latest
 	return nil
 }
 

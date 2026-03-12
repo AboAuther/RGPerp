@@ -19,6 +19,7 @@ import (
 	"github.com/AboAuther/RGPerp/backend/internal/config"
 	"github.com/AboAuther/RGPerp/backend/internal/model"
 	"github.com/AboAuther/RGPerp/backend/internal/router"
+	"github.com/AboAuther/RGPerp/backend/internal/service"
 )
 
 func main() {
@@ -62,6 +63,9 @@ func main() {
 	logger.Info("redis connected")
 
 	r := router.Setup(db, rds, logger, cfg)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	startPriceWorkers(workerCtx, db, logger, cfg)
 
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	srv := &http.Server{
@@ -83,6 +87,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	logger.Info("shutting down server...")
+	workerCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -90,6 +95,20 @@ func main() {
 		logger.Fatal("server forced to shutdown", zap.Error(err))
 	}
 	logger.Info("server exited")
+}
+
+func startPriceWorkers(ctx context.Context, db *gorm.DB, logger *zap.Logger, cfg *config.Config) {
+	source := cfg.Price.Source
+	if source == "" || source == "mock" {
+		feeder := service.NewMockPriceFeeder(db, logger, 2*time.Second)
+		go feeder.Run(ctx)
+		logger.Info("mock price feeder started", zap.Duration("interval", 2*time.Second))
+		return
+	}
+
+	logger.Warn("non-mock price source not implemented yet, ticker may be unavailable",
+		zap.String("price_source", source),
+	)
 }
 
 func initDB(cfg *config.Config) (*gorm.DB, error) {

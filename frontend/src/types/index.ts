@@ -97,6 +97,16 @@ export interface PriceData {
   timestamp: number
 }
 
+export interface MarketTicker {
+  symbol: string
+  mark_price: string
+  index_price: string
+  best_bid: string
+  best_ask: string
+  source: string
+  timestamp: number
+}
+
 export interface AuthChallenge {
   nonce: string
   message: string

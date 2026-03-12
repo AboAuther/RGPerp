@@ -31,9 +31,9 @@ var (
 
 // Account errors (20xxx)
 var (
-	ErrAccountNotFound      = New(http.StatusNotFound, 20001, "account not found")
-	ErrInsufficientBalance  = New(http.StatusBadRequest, 20002, "insufficient balance")
-	ErrAccountFrozen        = New(http.StatusForbidden, 20003, "account is frozen")
+	ErrAccountNotFound     = New(http.StatusNotFound, 20001, "account not found")
+	ErrInsufficientBalance = New(http.StatusBadRequest, 20002, "insufficient balance")
+	ErrAccountFrozen       = New(http.StatusForbidden, 20003, "account is frozen")
 )
 
 // Order errors (30xxx)
@@ -61,7 +61,8 @@ var (
 
 // System errors (90xxx)
 var (
-	ErrInternal   = New(http.StatusInternalServerError, 90001, "internal server error")
-	ErrBadRequest = New(http.StatusBadRequest, 90002, "bad request")
-	ErrRateLimit  = New(http.StatusTooManyRequests, 90003, "rate limit exceeded")
+	ErrPriceUnavailable = New(http.StatusServiceUnavailable, 90004, "price unavailable")
+	ErrInternal         = New(http.StatusInternalServerError, 90001, "internal server error")
+	ErrBadRequest       = New(http.StatusBadRequest, 90002, "bad request")
+	ErrRateLimit        = New(http.StatusTooManyRequests, 90003, "rate limit exceeded")
 )

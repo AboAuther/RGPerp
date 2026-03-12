@@ -12,6 +12,7 @@ import (
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/AboAuther/RGPerp/backend/internal/model"
 )
@@ -74,8 +75,27 @@ func (p *Processor) processDeposit(ctx context.Context, vLog gethtypes.Log) erro
 	amount := usdcUnitsToDecimal(event.Amount)
 
 	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if exists, err := vaultEventExists(tx, vLog.TxHash.Hex(), vLog.Index); err != nil || exists {
-			return err
+		now := time.Now().UTC()
+		vaultEvent := model.VaultEvent{
+			TxHash:      vLog.TxHash.Hex(),
+			LogIndex:    uint64(vLog.Index),
+			BlockNumber: vLog.BlockNumber,
+			EventType:   "deposit",
+			UserAddress: userAddress,
+			Amount:      amount,
+			Status:      "confirmed",
+			Processed:   false,
+		}
+		result := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "tx_hash"}, {Name: "log_index"}},
+			DoNothing: true,
+		}).Create(&vaultEvent)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			// Event already processed previously, skip to keep ledger idempotent.
+			return nil
 		}
 
 		user, account, err := ensureUserAccount(tx, userAddress)
@@ -89,29 +109,22 @@ func (p *Processor) processDeposit(ctx context.Context, vLog gethtypes.Log) erro
 			return err
 		}
 
-		now := time.Now().UTC()
-		if err := tx.Create(&model.VaultEvent{
-			TxHash:      vLog.TxHash.Hex(),
-			LogIndex:    uint64(vLog.Index),
-			BlockNumber: vLog.BlockNumber,
-			EventType:   "deposit",
-			UserAddress: userAddress,
-			Amount:      amount,
-			Status:      "confirmed",
-			Processed:   true,
-			ProcessedAt: &now,
-		}).Error; err != nil {
-			return err
-		}
-
-		return tx.Create(&model.LedgerEntry{
+		if err := tx.Create(&model.LedgerEntry{
 			UserID:        user.ID,
 			Type:          "deposit",
 			Amount:        amount,
 			BalanceBefore: before,
 			BalanceAfter:  account.AvailableBalance,
 			ReferenceType: "vault_event",
+			ReferenceID:   vaultEvent.ID,
 			Description:   "vault deposit confirmed",
+		}).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&model.VaultEvent{}).Where("id = ?", vaultEvent.ID).Updates(map[string]interface{}{
+			"processed":    true,
+			"processed_at": &now,
 		}).Error
 	})
 }
@@ -130,8 +143,26 @@ func (p *Processor) processWithdraw(ctx context.Context, vLog gethtypes.Log) err
 	nonce := event.Nonce.Uint64()
 
 	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if exists, err := vaultEventExists(tx, vLog.TxHash.Hex(), vLog.Index); err != nil || exists {
-			return err
+		now := time.Now().UTC()
+		vaultEvent := model.VaultEvent{
+			TxHash:      vLog.TxHash.Hex(),
+			LogIndex:    uint64(vLog.Index),
+			BlockNumber: vLog.BlockNumber,
+			EventType:   "withdraw",
+			UserAddress: userAddress,
+			Amount:      amount,
+			Status:      "confirmed",
+			Processed:   false,
+		}
+		result := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "tx_hash"}, {Name: "log_index"}},
+			DoNothing: true,
+		}).Create(&vaultEvent)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
 		}
 
 		user, account, err := ensureUserAccount(tx, userAddress)
@@ -145,21 +176,6 @@ func (p *Processor) processWithdraw(ctx context.Context, vLog gethtypes.Log) err
 			return err
 		}
 
-		now := time.Now().UTC()
-		if err := tx.Create(&model.VaultEvent{
-			TxHash:      vLog.TxHash.Hex(),
-			LogIndex:    uint64(vLog.Index),
-			BlockNumber: vLog.BlockNumber,
-			EventType:   "withdraw",
-			UserAddress: userAddress,
-			Amount:      amount,
-			Status:      "confirmed",
-			Processed:   true,
-			ProcessedAt: &now,
-		}).Error; err != nil {
-			return err
-		}
-
 		if err := tx.Model(&model.WithdrawalRequest{}).
 			Where("user_id = ? AND nonce = ?", user.ID, nonce).
 			Updates(map[string]interface{}{
@@ -169,24 +185,24 @@ func (p *Processor) processWithdraw(ctx context.Context, vLog gethtypes.Log) err
 			return err
 		}
 
-		return tx.Create(&model.LedgerEntry{
+		if err := tx.Create(&model.LedgerEntry{
 			UserID:        user.ID,
 			Type:          "withdraw",
 			Amount:        amount,
 			BalanceBefore: before,
 			BalanceAfter:  account.AvailableBalance,
 			ReferenceType: "vault_event",
+			ReferenceID:   vaultEvent.ID,
 			Description:   "vault withdraw confirmed",
+		}).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&model.VaultEvent{}).Where("id = ?", vaultEvent.ID).Updates(map[string]interface{}{
+			"processed":    true,
+			"processed_at": &now,
 		}).Error
 	})
-}
-
-func vaultEventExists(tx *gorm.DB, txHash string, logIndex uint) (bool, error) {
-	var count int64
-	if err := tx.Model(&model.VaultEvent{}).Where("tx_hash = ? AND log_index = ?", txHash, logIndex).Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 func ensureUserAccount(tx *gorm.DB, walletAddress string) (*model.User, *model.Account, error) {
