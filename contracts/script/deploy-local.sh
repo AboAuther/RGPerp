@@ -16,3 +16,6 @@ PRIVATE_KEY=$PRIVATE_KEY OPERATOR_ADDRESS=$OPERATOR_ADDRESS \
 
 echo ""
 echo "Deployment complete. Copy the addresses above into backend/.env"
+echo ""
+echo "Quick mint example (1000 USDC to default user):"
+echo "  bash script/mint-local.sh 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000"

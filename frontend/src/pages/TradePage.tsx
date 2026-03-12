@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Card, Col, Descriptions, Empty, Row, Select, Skeleton, Typography } from 'antd'
+import {
+  Alert,
+  Card,
+  Col,
+  Descriptions,
+  Empty,
+  Row,
+  Segmented,
+  Select,
+  Skeleton,
+  Typography,
+} from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { get } from '../services/api'
-import type { MarketTicker, SymbolInfo } from '../types'
+import type { KlineItem, MarketTicker, SymbolInfo } from '../types'
+import KlineChart from '../components/trading/KlineChart'
 
 export default function TradePage() {
   const [symbol, setSymbol] = useState<string>('BTC-PERP')
+  const [interval, setInterval] = useState<'1m' | '5m' | '15m' | '1h'>('1m')
 
   const marketsQuery = useQuery({
     queryKey: ['markets'],
@@ -25,9 +38,22 @@ export default function TradePage() {
 
   const tickerQuery = useQuery({
     queryKey: ['ticker', symbol],
-    queryFn: async () => (await get<MarketTicker>(`/markets/${symbol}/ticker`)).data!,
+    queryFn: async () => (await get<MarketTicker>(`/markets/${symbol}/price`)).data!,
     enabled: Boolean(symbol),
     refetchInterval: 2_000,
+  })
+
+  const klinesQuery = useQuery({
+    queryKey: ['klines', symbol, interval],
+    queryFn: async () =>
+      (
+        await get<KlineItem[]>(`/markets/${symbol}/klines`, {
+          interval,
+          limit: 200,
+        })
+      ).data ?? [],
+    enabled: Boolean(symbol),
+    refetchInterval: 5_000,
   })
 
   const marketOptions = useMemo(
@@ -83,9 +109,25 @@ export default function TradePage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
           <Card title="K 线图表" style={{ minHeight: 400 }}>
-            <Typography.Paragraph type="secondary">
-              里程碑3第一阶段：已接入交易对与ticker，K线将接入后端K线接口/TradingView数据源。
-            </Typography.Paragraph>
+            <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
+              <Col>
+                <Typography.Text type="secondary">TradingView Lightweight Charts</Typography.Text>
+              </Col>
+              <Col>
+                <Segmented
+                  value={interval}
+                  options={['1m', '5m', '15m', '1h']}
+                  onChange={(v) => setInterval(v as '1m' | '5m' | '15m' | '1h')}
+                />
+              </Col>
+            </Row>
+            {klinesQuery.isLoading ? (
+              <Skeleton active paragraph={{ rows: 8 }} />
+            ) : klinesQuery.data && klinesQuery.data.length > 0 ? (
+              <KlineChart data={klinesQuery.data} />
+            ) : (
+              <Empty description="暂无K线数据" />
+            )}
             <Typography.Text>
               当前交易对: {currentSymbol?.name ?? '-'}（{currentSymbol?.base_asset ?? '-'} /{' '}
               {currentSymbol?.quote_asset ?? '-'}）

@@ -16,6 +16,7 @@ type Config struct {
 	Blockchain  BlockchainConfig  `mapstructure:"blockchain"`
 	Hyperliquid HyperliquidConfig `mapstructure:"hyperliquid"`
 	Price       PriceConfig       `mapstructure:"price"`
+	Oracle      OracleConfig      `mapstructure:"oracle"`
 }
 
 type ServerConfig struct {
@@ -66,7 +67,13 @@ type HyperliquidConfig struct {
 }
 
 type PriceConfig struct {
-	Source string `mapstructure:"source"`
+	Source         string `mapstructure:"source"`
+	PollIntervalMS int    `mapstructure:"poll_interval_ms"`
+}
+
+type OracleConfig struct {
+	BTCUSDFeed string `mapstructure:"btc_usd_feed"`
+	ETHUSDFeed string `mapstructure:"eth_usd_feed"`
 }
 
 func Load() (*Config, error) {
@@ -108,12 +115,18 @@ func Load() (*Config, error) {
 	cfg.Hyperliquid.WalletAddress = v.GetString("HYPERLIQUID_WALLET_ADDRESS")
 	cfg.Hyperliquid.PrivateKey = v.GetString("HYPERLIQUID_PRIVATE_KEY")
 	cfg.Price.Source = v.GetString("PRICE_SOURCE")
+	cfg.Price.PollIntervalMS = v.GetInt("PRICE_POLL_INTERVAL_MS")
+	cfg.Oracle.BTCUSDFeed = v.GetString("ORACLE_BTC_USD_FEED")
+	cfg.Oracle.ETHUSDFeed = v.GetString("ORACLE_ETH_USD_FEED")
 
 	if cfg.Server.Port == "" {
 		cfg.Server.Port = "8080"
 	}
 	if cfg.Server.Mode == "" {
 		cfg.Server.Mode = "debug"
+	}
+	if cfg.Price.PollIntervalMS <= 0 {
+		cfg.Price.PollIntervalMS = 2000
 	}
 
 	return cfg, nil
@@ -128,7 +141,8 @@ func bindEnvMappings(v *viper.Viper) {
 		"JWT_SECRET", "JWT_EXPIRE_HOURS",
 		"RPC_URL", "CHAIN_ID", "VAULT_ADDRESS", "USDC_ADDRESS", "OPERATOR_PRIVATE_KEY",
 		"HYPERLIQUID_API_URL", "HYPERLIQUID_WALLET_ADDRESS", "HYPERLIQUID_PRIVATE_KEY",
-		"PRICE_SOURCE",
+		"PRICE_SOURCE", "PRICE_POLL_INTERVAL_MS",
+		"ORACLE_BTC_USD_FEED", "ORACLE_ETH_USD_FEED",
 	}
 	for _, key := range envKeys {
 		_ = v.BindEnv(key)

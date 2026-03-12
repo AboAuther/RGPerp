@@ -220,6 +220,20 @@ bash .local/milestone2_flow.sh
 - 提现 `10 USDC` 后 `available_balance = 90`
 - 提现记录状态为 `confirmed`
 
+### 4.1 常用 Mint 命令
+
+部署完合约后，可直接执行：
+
+```bash
+cd /Users/xiaobao/PerpExchange/contracts
+bash script/mint-local.sh 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000
+```
+
+含义：
+
+- 给 `0x7099...79C8` 账户铸造 `1000 USDC`
+- 合约按 `6 decimals` 处理（即链上数量 `1000000000`）
+
 ## 5. Postman 使用说明
 
 导入文件：

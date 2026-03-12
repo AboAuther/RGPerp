@@ -36,7 +36,9 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	v1.POST("/auth/challenge", authH.Challenge)
 	v1.POST("/auth/login", authH.Login)
 	v1.GET("/markets", marketH.List)
+	v1.GET("/markets/:symbol/price", marketH.Price)
 	v1.GET("/markets/:symbol/ticker", marketH.Ticker)
+	v1.GET("/markets/:symbol/klines", marketH.Klines)
 
 	authenticated := v1.Group("/")
 	authenticated.Use(middleware.Auth(cfg.JWT.Secret))

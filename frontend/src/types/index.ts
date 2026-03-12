@@ -107,6 +107,15 @@ export interface MarketTicker {
   timestamp: number
 }
 
+export interface KlineItem {
+  time: number
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+}
+
 export interface AuthChallenge {
   nonce: string
   message: string

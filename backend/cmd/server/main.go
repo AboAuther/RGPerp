@@ -98,16 +98,12 @@ func main() {
 }
 
 func startPriceWorkers(ctx context.Context, db *gorm.DB, logger *zap.Logger, cfg *config.Config) {
-	source := cfg.Price.Source
-	if source == "" || source == "mock" {
-		feeder := service.NewMockPriceFeeder(db, logger, 2*time.Second)
-		go feeder.Run(ctx)
-		logger.Info("mock price feeder started", zap.Duration("interval", 2*time.Second))
-		return
-	}
-
-	logger.Warn("non-mock price source not implemented yet, ticker may be unavailable",
-		zap.String("price_source", source),
+	interval := time.Duration(cfg.Price.PollIntervalMS) * time.Millisecond
+	feeder := service.NewPriceFeeder(db, logger, cfg)
+	go feeder.Run(ctx, interval)
+	logger.Info("price feeder started",
+		zap.String("source", cfg.Price.Source),
+		zap.Duration("interval", interval),
 	)
 }
 
