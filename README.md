@@ -65,9 +65,9 @@ cd backend && go run cmd/server/main.go
 ### 6. 启动链下服务
 
 ```bash
-go run cmd/indexer/main.go
-go run cmd/hedger/main.go
-go run cmd/liquidator/main.go
+cd backend && go run cmd/indexer/main.go
+cd backend && go run cmd/hedger/main.go
+cd backend && go run cmd/liquidator/main.go
 ```
 
 ### 7. 启动前端

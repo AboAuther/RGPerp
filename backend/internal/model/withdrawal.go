@@ -8,6 +8,8 @@ import (
 
 type WithdrawalRequest struct {
 	BaseModel
+	RequestID       string          `gorm:"type:varchar(64);uniqueIndex;not null" json:"request_id"`
+	IdempotencyKey  string          `gorm:"type:varchar(80);index" json:"idempotency_key"`
 	UserID          uint64          `gorm:"index;not null" json:"user_id"`
 	Amount          decimal.Decimal `gorm:"type:decimal(36,18);not null" json:"amount"`
 	Status          string          `gorm:"type:varchar(20);index;not null" json:"status"`

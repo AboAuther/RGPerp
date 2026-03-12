@@ -61,7 +61,7 @@ func main() {
 	}
 	logger.Info("redis connected")
 
-	r := router.Setup(db, rds, logger)
+	r := router.Setup(db, rds, logger, cfg)
 
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	srv := &http.Server{
