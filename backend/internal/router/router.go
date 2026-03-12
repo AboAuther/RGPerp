@@ -43,6 +43,7 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authenticated := v1.Group("/")
 	authenticated.Use(middleware.Auth(cfg.JWT.Secret))
 	authenticated.GET("/account", accountH.Get)
+	authenticated.GET("/deposits", accountH.Deposits)
 	authenticated.GET("/wallet/deposit-info", walletH.DepositInfo)
 	authenticated.POST("/withdrawals", withdrawalH.Create)
 	authenticated.GET("/withdrawals", withdrawalH.List)

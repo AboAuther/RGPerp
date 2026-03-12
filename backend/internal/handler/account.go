@@ -33,3 +33,18 @@ func (h *AccountHandler) Get(c *gin.Context) {
 
 	response.OK(c, account)
 }
+
+func (h *AccountHandler) Deposits(c *gin.Context) {
+	userIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.FailWithMsg(c, http.StatusUnauthorized, 10004, "unauthorized")
+		return
+	}
+
+	items, err := h.accountService.ListDeposits(userIDValue.(uint64))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}

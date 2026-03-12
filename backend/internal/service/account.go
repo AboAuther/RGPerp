@@ -26,6 +26,15 @@ type AccountOutput struct {
 	Equity              decimal.Decimal `json:"equity"`
 }
 
+type DepositRecordOutput struct {
+	TxHash      string          `json:"tx_hash"`
+	LogIndex    uint64          `json:"log_index"`
+	BlockNumber uint64          `json:"block_number"`
+	Amount      decimal.Decimal `json:"amount"`
+	Status      string          `json:"status"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
 func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
 	if err := expireDueWithdrawals(s.db, userID); err != nil {
 		return nil, err
@@ -57,6 +66,37 @@ func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
 		WithdrawableBalance: withdrawable,
 		Equity:              account.AvailableBalance.Add(account.LockedBalance),
 	}, nil
+}
+
+func (s *AccountService) ListDeposits(userID uint64) ([]DepositRecordOutput, error) {
+	var user model.User
+	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperr.ErrUnauthorized
+		}
+		return nil, err
+	}
+
+	var events []model.VaultEvent
+	if err := s.db.Where("user_address = ? AND event_type = ?", user.WalletAddress, "deposit").
+		Order("created_at desc").
+		Limit(200).
+		Find(&events).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]DepositRecordOutput, 0, len(events))
+	for _, event := range events {
+		items = append(items, DepositRecordOutput{
+			TxHash:      event.TxHash,
+			LogIndex:    event.LogIndex,
+			BlockNumber: event.BlockNumber,
+			Amount:      event.Amount,
+			Status:      event.Status,
+			CreatedAt:   event.CreatedAt,
+		})
+	}
+	return items, nil
 }
 
 func pendingWithdrawalAmount(db *gorm.DB, userID uint64) (decimal.Decimal, error) {

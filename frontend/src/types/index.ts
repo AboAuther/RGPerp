@@ -150,3 +150,12 @@ export interface WithdrawalRequest {
   tx_hash?: string
   created_at: string
 }
+
+export interface DepositRecord {
+  tx_hash: string
+  log_index: number
+  block_number: number
+  amount: string
+  status: string
+  created_at: string
+}

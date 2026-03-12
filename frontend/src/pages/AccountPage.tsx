@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { SwapOutlined } from '@ant-design/icons'
 import {
   Alert,
   Button,
@@ -22,6 +23,7 @@ import type {
   Account,
   AuthChallenge,
   AuthLogin,
+  DepositRecord,
   DepositInfo,
   WithdrawalRequest,
 } from '../types'
@@ -110,6 +112,15 @@ export default function AccountPage() {
     enabled: authenticated,
   })
 
+  const depositsQuery = useQuery({
+    queryKey: ['deposits', token],
+    queryFn: async () => {
+      const res = await get<{ items: DepositRecord[] }>('/deposits')
+      return res.data?.items ?? []
+    },
+    enabled: authenticated,
+  })
+
   const loginMutation = useMutation({
     mutationFn: async () => {
       if (!window.ethereum) {
@@ -151,6 +162,7 @@ export default function AccountPage() {
       setAuth(result.token, result.user.wallet_address)
       queryClient.invalidateQueries({ queryKey: ['account'] })
       queryClient.invalidateQueries({ queryKey: ['deposit-info'] })
+      queryClient.invalidateQueries({ queryKey: ['deposits'] })
       queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
       void messageApi.success('登录成功')
     },
@@ -271,8 +283,10 @@ export default function AccountPage() {
       depositForm.resetFields()
       void messageApi.success(`充值交易已上链: ${result.depositTxHash}`)
       queryClient.invalidateQueries({ queryKey: ['account'] })
+      queryClient.invalidateQueries({ queryKey: ['deposits'] })
       setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: ['account'] })
+        void queryClient.invalidateQueries({ queryKey: ['deposits'] })
       }, 6000)
     },
     onError: (error) => {
@@ -292,26 +306,52 @@ export default function AccountPage() {
       },
       { title: 'Nonce', dataIndex: 'nonce', key: 'nonce' },
       {
-        title: '截止时间',
-        dataIndex: 'deadline',
-        key: 'deadline',
-        render: (value: string) => (
-          <Space size={8}>
-            <Typography.Text>{formatDeadline(value, deadlineMode)}</Typography.Text>
+        title: (
+          <Space size={6}>
+            <Typography.Text>截止时间</Typography.Text>
             <Button
               size="small"
-              onClick={() =>
-                setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))
-              }
+              type="text"
+              icon={<SwapOutlined />}
+              onClick={() => setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))}
             >
               {deadlineMode === 'local' ? '看时间戳' : '看本地时间'}
             </Button>
           </Space>
         ),
+        dataIndex: 'deadline',
+        key: 'deadline',
+        render: (value: string) => <Typography.Text>{formatDeadline(value, deadlineMode)}</Typography.Text>,
       },
       { title: '链上 Tx', dataIndex: 'tx_hash', key: 'tx_hash', render: (value?: string) => value || '-' },
     ],
     [deadlineMode],
+  )
+
+  const depositColumns = useMemo(
+    () => [
+      {
+        title: '充值时间',
+        dataIndex: 'created_at',
+        key: 'created_at',
+        render: (value: string) => new Date(value).toLocaleString(),
+      },
+      { title: '金额', dataIndex: 'amount', key: 'amount' },
+      { title: '区块', dataIndex: 'block_number', key: 'block_number' },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        render: (status: string) => <Tag color={status === 'confirmed' ? 'green' : 'blue'}>{status}</Tag>,
+      },
+      {
+        title: '链上 Tx',
+        dataIndex: 'tx_hash',
+        key: 'tx_hash',
+        render: (value: string) => value || '-',
+      },
+    ],
+    [],
   )
 
   return (
@@ -437,6 +477,19 @@ export default function AccountPage() {
           </Card>
         </Col>
       </Row>
+
+      {authenticated ? (
+        <Card style={{ marginTop: 24 }} title="充值记录">
+          <Table
+            rowKey={(record) => `${record.tx_hash}-${record.log_index}`}
+            loading={depositsQuery.isLoading}
+            dataSource={depositsQuery.data ?? []}
+            columns={depositColumns}
+            pagination={false}
+            scroll={{ x: 960 }}
+          />
+        </Card>
+      ) : null}
 
       {authenticated ? (
         <Card style={{ marginTop: 24 }} title="提现记录">
