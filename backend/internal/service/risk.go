@@ -50,12 +50,16 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	if err != nil {
 		return nil, err
 	}
+	markPrices, err := loadLatestMarkPrices(db, positions)
+	if err != nil {
+		return nil, err
+	}
 
 	unrealized := decimal.Zero
 	totalInitial := decimal.Zero
 	totalMaintenance := decimal.Zero
 	for _, pos := range positions {
-		markPrice := pos.MarkPrice
+		markPrice := latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice)
 		unrealized = unrealized.Add(calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size))
 		maintenanceRate := decimal.Zero
 		if sym, ok := symbolMap[pos.Symbol]; ok {
@@ -88,11 +92,11 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	switch {
 	case user.Status == "frozen":
 		riskLevel = "frozen"
-	case equity.LessThanOrEqual(totalMaintenance) || marginRatio.GreaterThanOrEqual(decimal.NewFromInt(100)):
+	case len(positions) > 0 && (equity.LessThanOrEqual(totalMaintenance) || marginRatio.GreaterThanOrEqual(decimal.NewFromInt(100))):
 		riskLevel = "liquidating"
-	case marginRatio.GreaterThanOrEqual(decimal.NewFromInt(80)) || freeCollateral.LessThanOrEqual(decimal.Zero):
+	case len(positions) > 0 && (marginRatio.GreaterThanOrEqual(decimal.NewFromInt(80)) || freeCollateral.LessThanOrEqual(decimal.Zero)):
 		riskLevel = "reduce_only"
-	case marginRatio.GreaterThanOrEqual(decimal.NewFromInt(60)):
+	case len(positions) > 0 && marginRatio.GreaterThanOrEqual(decimal.NewFromInt(60)):
 		riskLevel = "at_risk"
 	}
 
@@ -176,4 +180,42 @@ func loadRiskSymbols(db *gorm.DB, positions []model.Position) (map[string]model.
 		out[sym.Name] = sym
 	}
 	return out, nil
+}
+
+func loadLatestMarkPrices(db *gorm.DB, positions []model.Position) (map[string]decimal.Decimal, error) {
+	if len(positions) == 0 {
+		return map[string]decimal.Decimal{}, nil
+	}
+
+	names := make([]string, 0, len(positions))
+	seen := make(map[string]struct{}, len(positions))
+	for _, pos := range positions {
+		name := strings.ToUpper(strings.TrimSpace(pos.Symbol))
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+
+	var ticks []model.PriceTick
+	if err := db.Where("symbol IN ?", names).Order("symbol asc, created_at desc, id desc").Find(&ticks).Error; err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]decimal.Decimal, len(names))
+	for _, tick := range ticks {
+		if _, ok := out[tick.Symbol]; ok {
+			continue
+		}
+		out[tick.Symbol] = tick.MarkPrice
+	}
+	return out, nil
+}
+
+func latestMarkForSymbol(markPrices map[string]decimal.Decimal, symbol string, fallback decimal.Decimal) decimal.Decimal {
+	if price, ok := markPrices[strings.ToUpper(strings.TrimSpace(symbol))]; ok && price.GreaterThan(decimal.Zero) {
+		return price
+	}
+	return fallback
 }

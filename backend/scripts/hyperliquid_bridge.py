@@ -61,10 +61,14 @@ def main() -> None:
         exchange = Exchange(wallet, api_url, spot_meta=EMPTY_SPOT_META)
         leverage = int(payload.get("leverage", 5))
         is_cross = bool(payload.get("is_cross", True))
+        reduce_only = bool(payload.get("reduce_only", False))
         exchange.update_leverage(leverage, coin, is_cross=is_cross)
         is_buy = str(payload["side"]).lower() == "long"
         size = float(payload["size"])
-        result = exchange.market_open(coin, is_buy, size)
+        if reduce_only:
+            result = exchange.market_close(coin, size)
+        else:
+            result = exchange.market_open(coin, is_buy, size)
         oid, filled_size, filled_price = parse_filled(result)
         emit(
             {

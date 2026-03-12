@@ -24,9 +24,29 @@ api.interceptors.response.use(
       localStorage.removeItem('token')
       window.location.href = '/'
     }
+    const serverMessage = error.response?.data?.message
+    if (typeof serverMessage === 'string' && serverMessage.trim()) {
+      error.message = serverMessage
+    }
     return Promise.reject(error)
   },
 )
+
+export function getErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const serverMessage = error.response?.data?.message
+    if (typeof serverMessage === 'string' && serverMessage.trim()) {
+      return serverMessage
+    }
+    if (typeof error.message === 'string' && error.message.trim()) {
+      return error.message
+    }
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+  return fallback
+}
 
 export async function get<T>(url: string, params?: Record<string, unknown>): Promise<ApiResponse<T>> {
   const res = await api.get<ApiResponse<T>>(url, { params })

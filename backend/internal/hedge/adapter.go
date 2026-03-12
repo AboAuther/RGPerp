@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -19,6 +20,7 @@ type OrderRequest struct {
 	Side   string
 	Size   decimal.Decimal
 	Price  decimal.Decimal
+	ReduceOnly bool
 }
 
 type OrderResult struct {
@@ -33,7 +35,10 @@ type Adapter interface {
 	GetPosition(ctx context.Context, symbol string) (decimal.Decimal, error)
 }
 
-type MockAdapter struct{}
+type MockAdapter struct {
+	mu        sync.Mutex
+	positions map[string]decimal.Decimal
+}
 
 type HyperliquidAdapter struct {
 	apiURL        string
@@ -55,10 +60,23 @@ func NewAdapter(cfg *config.Config) Adapter {
 			bridgePath: "scripts/hyperliquid_bridge.py",
 		}
 	}
-	return &MockAdapter{}
+	return &MockAdapter{positions: make(map[string]decimal.Decimal)}
 }
 
 func (a *MockAdapter) PlaceOrder(_ context.Context, req OrderRequest) (*OrderResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.positions == nil {
+		a.positions = make(map[string]decimal.Decimal)
+	}
+
+	filled := req.Size
+	if req.Side == "short" {
+		filled = filled.Neg()
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(req.Symbol))
+	a.positions[symbol] = a.positions[symbol].Add(filled)
+
 	return &OrderResult{
 		ExternalOrderID: fmt.Sprintf("mock-%s-%s", strings.ToLower(req.Symbol), req.Side),
 		Status:          "filled",
@@ -67,8 +85,13 @@ func (a *MockAdapter) PlaceOrder(_ context.Context, req OrderRequest) (*OrderRes
 	}, nil
 }
 
-func (a *MockAdapter) GetPosition(_ context.Context, _ string) (decimal.Decimal, error) {
-	return decimal.Zero, nil
+func (a *MockAdapter) GetPosition(_ context.Context, symbol string) (decimal.Decimal, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.positions == nil {
+		return decimal.Zero, nil
+	}
+	return a.positions[strings.ToUpper(strings.TrimSpace(symbol))], nil
 }
 
 func useHyperliquidAdapter(cfg *config.Config) bool {

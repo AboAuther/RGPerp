@@ -560,6 +560,10 @@ func (s *OrderService) ListOpenPositions(userID uint64) ([]PositionListItem, err
 	if err != nil {
 		return nil, err
 	}
+	markPrices, err := loadLatestMarkPrices(s.db, positions)
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]PositionListItem, 0, len(positions))
 	for _, pos := range positions {
@@ -567,7 +571,7 @@ func (s *OrderService) ListOpenPositions(userID uint64) ([]PositionListItem, err
 		if sym, ok := symbols[pos.Symbol]; ok {
 			maintenanceRate = sym.MaintenanceMarginRate
 		}
-		item, err := s.buildPositionOutput(s.db, account, pos, pos.MarkPrice, maintenanceRate)
+		item, err := s.buildPositionOutput(s.db, account, pos, latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice), maintenanceRate)
 		if err != nil {
 			return nil, err
 		}
@@ -691,16 +695,25 @@ func (s *OrderService) refreshPositionOutput(tx *gorm.DB, account model.Account,
 	if err := tx.Where("name = ?", pos.Symbol).First(&symbol).Error; err != nil {
 		return nil, err
 	}
-	return s.buildPositionOutput(tx, account, pos, pos.MarkPrice, symbol.MaintenanceMarginRate)
-}
-
-func (s *OrderService) buildPositionOutput(tx *gorm.DB, account model.Account, pos model.Position, markPrice, maintenanceRate decimal.Decimal) (*PositionListItem, error) {
-	effectiveMargin, err := s.positionEffectiveMargin(tx, account, pos, markPrice)
+	markPrices, err := loadLatestMarkPrices(tx, []model.Position{pos})
 	if err != nil {
 		return nil, err
 	}
-	unrealized := calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size).Round(18)
-	notional := markPrice.Mul(pos.Size).Round(18)
+	return s.buildPositionOutput(tx, account, pos, latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice), symbol.MaintenanceMarginRate)
+}
+
+func (s *OrderService) buildPositionOutput(tx *gorm.DB, account model.Account, pos model.Position, markPrice, maintenanceRate decimal.Decimal) (*PositionListItem, error) {
+	markPrices, err := loadLatestMarkPrices(tx, []model.Position{pos})
+	if err != nil {
+		return nil, err
+	}
+	currentMark := latestMarkForSymbol(markPrices, pos.Symbol, markPrice)
+	effectiveMargin, err := s.positionEffectiveMargin(tx, account, pos, currentMark)
+	if err != nil {
+		return nil, err
+	}
+	unrealized := calculatePnL(pos.Side, pos.EntryPrice, currentMark, pos.Size).Round(18)
+	notional := currentMark.Mul(pos.Size).Round(18)
 	maintenanceMargin := notional.Mul(maintenanceRate).Round(18)
 	equity := effectiveMargin.Add(unrealized)
 	riskRatio := decimal.Zero
@@ -715,7 +728,7 @@ func (s *OrderService) buildPositionOutput(tx *gorm.DB, account model.Account, p
 		MarginMode:        pos.MarginMode,
 		Size:              pos.Size,
 		EntryPrice:        pos.EntryPrice,
-		MarkPrice:         markPrice,
+		MarkPrice:         currentMark,
 		LiquidationPrice:  calculateLiquidationPrice(pos.Side, pos.MarginMode, pos.EntryPrice, pos.Size, effectiveMargin, maintenanceRate),
 		Margin:            pos.Margin,
 		Notional:          notional,
@@ -811,10 +824,15 @@ func (s *OrderService) positionEffectiveMargin(tx *gorm.DB, account model.Accoun
 		return pos.Margin, nil
 	}
 
+	markPrices, err := loadLatestMarkPrices(tx, crossPositions)
+	if err != nil {
+		return decimal.Zero, err
+	}
+
 	totalCrossNotional := decimal.Zero
 	positionNotional := markPrice.Mul(pos.Size)
 	for _, item := range crossPositions {
-		itemPrice := item.MarkPrice
+		itemPrice := latestMarkForSymbol(markPrices, item.Symbol, item.MarkPrice)
 		if item.ID == pos.ID {
 			itemPrice = markPrice
 		}
@@ -847,7 +865,7 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 			internalNet = internalNet.Sub(pos.Size)
 		}
 	}
-	target := internalNet.Neg().Round(18)
+	target := internalNet.Round(18)
 	currentExternal := decimal.Zero
 	var lastSnapshot model.SystemRiskSnapshot
 	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastSnapshot).Error; err == nil {

@@ -105,6 +105,14 @@ func startPriceWorkers(ctx context.Context, db *gorm.DB, logger *zap.Logger, cfg
 		zap.String("source", cfg.Price.Source),
 		zap.Duration("interval", interval),
 	)
+
+	retention := time.Duration(cfg.Price.RetentionHours) * time.Hour
+	cleaner := service.NewPriceRetentionCleaner(db, logger, retention)
+	go cleaner.Run(ctx, time.Hour)
+	logger.Info("price tick retention cleaner started",
+		zap.Duration("retention", retention),
+		zap.Duration("interval", time.Hour),
+	)
 }
 
 func initDB(cfg *config.Config) (*gorm.DB, error) {

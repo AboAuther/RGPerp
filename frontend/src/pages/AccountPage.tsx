@@ -11,7 +11,6 @@ import {
   Input,
   Row,
   Space,
-  Statistic,
   Table,
   Tag,
   Typography,
@@ -19,7 +18,7 @@ import {
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { encodeFunctionData, parseUnits, toHex } from 'viem'
-import { post, get } from '../services/api'
+import { post, get, getErrorMessage } from '../services/api'
 import { useAuthStore } from '../stores/authStore'
 import { useThemeStore } from '../stores/themeStore'
 import type {
@@ -83,6 +82,39 @@ function shortenMiddle(value: string, left = 10, right = 8): string {
     return value
   }
   return `${value.slice(0, left)}...${value.slice(-right)}`
+}
+
+function MetricCard({
+  title,
+  value,
+  suffix,
+  minHeight = 132,
+}: {
+  title: string
+  value: string
+  suffix: string
+  minHeight?: number
+}) {
+  return (
+    <Card size="small" styles={{ body: { minHeight, display: 'flex', alignItems: 'center' } }}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Typography.Text type="secondary" style={{ fontSize: 14, whiteSpace: 'nowrap' }}>
+          {title}
+        </Typography.Text>
+        <Typography.Text
+          style={{
+            fontSize: 22,
+            lineHeight: 1.15,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            display: 'block',
+          }}
+        >
+          {value} {suffix}
+        </Typography.Text>
+      </Space>
+    </Card>
+  )
 }
 
 async function waitForTxReceipt(hash: string): Promise<void> {
@@ -206,7 +238,7 @@ export default function AccountPage() {
       void messageApi.success('登录成功')
     },
     onError: (error) => {
-      void messageApi.error(error instanceof Error ? error.message : '登录失败')
+      void messageApi.error(getErrorMessage(error, '登录失败'))
     },
   })
 
@@ -227,7 +259,7 @@ export default function AccountPage() {
       void messageApi.success('提现授权已生成')
     },
     onError: (error) => {
-      void messageApi.error(error instanceof Error ? error.message : '提现申请失败')
+      void messageApi.error(getErrorMessage(error, '提现申请失败'))
     },
   })
 
@@ -336,7 +368,7 @@ export default function AccountPage() {
       }, 3000)
     },
     onError: (error) => {
-      void messageApi.error(error instanceof Error ? error.message : '充值失败')
+      void messageApi.error(getErrorMessage(error, '充值失败'))
     },
   })
 
@@ -415,7 +447,7 @@ export default function AccountPage() {
       }, 3000)
     },
     onError: (error) => {
-      const raw = error instanceof Error ? error.message : '提现执行失败'
+      const raw = getErrorMessage(error, '提现执行失败')
       let friendly = raw
       if (raw.includes('InvalidSignature')) {
         friendly = '提现授权无效。请重新生成最新授权后再发起提现。'
@@ -433,7 +465,12 @@ export default function AccountPage() {
 
   const withdrawalColumns = useMemo(
     () => [
-      { title: '请求 ID', dataIndex: 'request_id', key: 'request_id' },
+      {
+        title: '提现时间',
+        dataIndex: 'created_at',
+        key: 'created_at',
+        render: (value: string) => new Date(value).toLocaleString(),
+      },
       { title: '金额', dataIndex: 'amount', key: 'amount', render: (value: string) => `${formatAmount(value)} USDC` },
       {
         title: '状态',
@@ -543,41 +580,68 @@ export default function AccountPage() {
               }}
             >
               <Typography.Text type="secondary">钱包地址</Typography.Text>
-              <Typography.Paragraph className="rg-mono" style={{ fontSize: 18, marginBottom: 0, marginTop: 6 }}>
+              <Typography.Paragraph
+                className="rg-mono"
+                style={{
+                  fontSize: 18,
+                  marginBottom: 0,
+                  marginTop: 6,
+                  wordBreak: 'break-all',
+                  lineHeight: 1.35,
+                }}
+              >
                 {walletAddress}
               </Typography.Paragraph>
             </div>
 
             <Row gutter={[12, 12]}>
               <Col span={12}>
-                <Card size="small">
-                  <Statistic title="可用余额" value={formatAmount(accountQuery.data?.available_balance)} suffix="USDC" />
-                </Card>
+                <MetricCard
+                  title="可用余额"
+                  value={formatAmount(accountQuery.data?.available_balance)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
               </Col>
               <Col span={12}>
-                <Card size="small">
-                  <Statistic title="账户权益" value={formatAmount(accountQuery.data?.equity)} suffix="USDC" />
-                </Card>
+                <MetricCard
+                  title="账户权益"
+                  value={formatAmount(accountQuery.data?.equity)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
               </Col>
               <Col span={12}>
-                <Card size="small">
-                  <Statistic title="锁定余额" value={formatAmount(accountQuery.data?.locked_balance)} suffix="USDC" />
-                </Card>
+                <MetricCard
+                  title="锁定余额"
+                  value={formatAmount(accountQuery.data?.locked_balance)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
               </Col>
               <Col span={12}>
-                <Card size="small">
-                  <Statistic title="可提现" value={formatAmount(accountQuery.data?.withdrawable_balance)} suffix="USDC" />
-                </Card>
+                <MetricCard
+                  title="可提现"
+                  value={formatAmount(accountQuery.data?.withdrawable_balance)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
               </Col>
               <Col span={12}>
-                <Card size="small">
-                  <Statistic title="未实现盈亏" value={formatAmount(accountQuery.data?.unrealized_pnl)} suffix="USDC" />
-                </Card>
+                <MetricCard
+                  title="未实现盈亏"
+                  value={formatAmount(accountQuery.data?.unrealized_pnl)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
               </Col>
               <Col span={12}>
-                <Card size="small">
-                  <Statistic title="风险率" value={formatAmount(accountQuery.data?.margin_ratio, 2)} suffix="%" />
-                </Card>
+                <MetricCard
+                  title="风险率"
+                  value={formatAmount(accountQuery.data?.margin_ratio, 2)}
+                  suffix="%"
+                  minHeight={132}
+                />
               </Col>
             </Row>
 

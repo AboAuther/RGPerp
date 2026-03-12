@@ -235,6 +235,37 @@ body.light-theme {
   font-size: 13px;
 }
 
+.rg-side-segmented {
+  padding: 4px;
+  border-radius: 14px;
+}
+
+.rg-side-segmented .ant-segmented-item {
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.rg-side-segmented .ant-segmented-item-label {
+  font-weight: 600;
+}
+
+.rg-side-segmented--long .ant-segmented-item-selected {
+  background: linear-gradient(135deg, rgba(46, 201, 176, 0.92) 0%, rgba(24, 181, 133, 0.96) 100%);
+  box-shadow: 0 8px 20px rgba(24, 181, 133, 0.24);
+}
+
+.rg-side-segmented--long .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #041915;
+}
+
+.rg-side-segmented--short .ant-segmented-item-selected {
+  background: linear-gradient(135deg, rgba(255, 107, 107, 0.95) 0%, rgba(232, 76, 88, 0.96) 100%);
+  box-shadow: 0 8px 20px rgba(232, 76, 88, 0.22);
+}
+
+.rg-side-segmented--short .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #1f0a0d;
+}
+
 body.light-theme .rg-chart-controls,
 body.light-theme .rg-chart-range-group,
 body.light-theme .rg-chart-toolbar,
@@ -255,6 +286,14 @@ body.light-theme .rg-chart-overlay {
 
 body.light-theme .rg-chart-legend-symbol {
   color: #10202d;
+}
+
+body.light-theme .rg-side-segmented--long .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #ffffff;
+}
+
+body.light-theme .rg-side-segmented--short .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #ffffff;
 }
 
 @media (max-width: 992px) {

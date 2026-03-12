@@ -4,8 +4,6 @@ import {
   LineChartOutlined,
   MoonOutlined,
   WalletOutlined,
-  HistoryOutlined,
-  SettingOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/themeStore'
@@ -15,8 +13,6 @@ const { Header, Content, Footer } = Layout
 const menuItems = [
   { key: '/', icon: <LineChartOutlined />, label: '交易' },
   { key: '/account', icon: <WalletOutlined />, label: '资产' },
-  { key: '/history', icon: <HistoryOutlined />, label: '历史' },
-  { key: '/admin', icon: <SettingOutlined />, label: '管理' },
 ]
 
 export default function AppLayout() {

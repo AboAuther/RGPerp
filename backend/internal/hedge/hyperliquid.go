@@ -20,6 +20,7 @@ func (a *HyperliquidAdapter) PlaceOrder(ctx context.Context, req OrderRequest) (
 		"price":          req.Price.String(),
 		"leverage":       5,
 		"is_cross":       true,
+		"reduce_only":    req.ReduceOnly,
 	})
 	if err != nil {
 		return nil, err

@@ -23,7 +23,7 @@ import {
   message,
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { get, post } from '../services/api'
+import { get, post, getErrorMessage } from '../services/api'
 import type {
   Account,
   AuthChallenge,
@@ -215,7 +215,7 @@ export default function TradePage() {
       void messageApi.success('登录成功')
     },
     onError: (error) => {
-      void messageApi.error(error instanceof Error ? error.message : '登录失败')
+      void messageApi.error(getErrorMessage(error, '登录失败'))
     },
   })
 
@@ -250,7 +250,7 @@ export default function TradePage() {
       void messageApi.success('市价单已成交')
     },
     onError: (error) => {
-      void messageApi.error(error instanceof Error ? error.message : '下单失败')
+      void messageApi.error(getErrorMessage(error, '下单失败'))
     },
   })
 
@@ -668,7 +668,11 @@ export default function TradePage() {
                   onFinish={(values) => orderMutation.mutate(values)}
                 >
                   <Form.Item label="方向" name="side">
-                    <Segmented block options={[{ label: '做多', value: 'long' }, { label: '做空', value: 'short' }]} />
+                    <Segmented
+                      block
+                      className={`rg-side-segmented rg-side-segmented--${selectedSide}`}
+                      options={[{ label: '做多', value: 'long' }, { label: '做空', value: 'short' }]}
+                    />
                   </Form.Item>
                   <Form.Item label="保证金模式" name="margin_mode">
                     <Segmented block options={[{ label: '逐仓', value: 'isolated' }, { label: '全仓', value: 'cross' }]} />

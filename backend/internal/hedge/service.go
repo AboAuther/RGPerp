@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/AboAuther/RGPerp/backend/internal/model"
 	"github.com/shopspring/decimal"
@@ -63,7 +64,8 @@ func (s *Service) processPending(ctx context.Context) error {
 func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var task model.HedgeTask
-		if err := tx.Where("id = ?", taskID).First(&task).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", taskID).First(&task).Error; err != nil {
 			return err
 		}
 		if task.Status != "pending" && task.Status != "retrying" {
@@ -71,7 +73,8 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 		}
 
 		var order model.HedgeOrder
-		if err := tx.Where("hedge_task_id = ?", task.ID).Order("id asc").First(&order).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("hedge_task_id = ?", task.ID).Order("id asc").First(&order).Error; err != nil {
 			return err
 		}
 
@@ -98,12 +101,16 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			order.Side = "long"
 		}
 		order.Size = delta.Abs()
+		reduceOnly := !currentExternal.IsZero() &&
+			currentExternal.Sign() != delta.Sign() &&
+			delta.Abs().LessThanOrEqual(currentExternal.Abs())
 
 		result, err := s.adapter.PlaceOrder(ctx, OrderRequest{
-			Symbol: task.Symbol,
-			Side:   order.Side,
-			Size:   order.Size,
-			Price:  order.Price,
+			Symbol:     task.Symbol,
+			Side:       order.Side,
+			Size:       order.Size,
+			Price:      order.Price,
+			ReduceOnly: reduceOnly,
 		})
 		if err != nil {
 			order.RetryCount++
@@ -130,9 +137,23 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			return err
 		}
 
-		task.Status = "completed"
-		task.CurrentHedgePosition = task.TargetHedgePosition
-		task.Drift = decimal.Zero
+		actualFilled := result.FilledSize
+		if order.Side == "short" {
+			actualFilled = actualFilled.Neg()
+		}
+		task.CurrentHedgePosition = currentExternal.Add(actualFilled)
+		task.Drift = task.TargetHedgePosition.Sub(task.CurrentHedgePosition).Round(18)
+
+		if task.Drift.Abs().LessThanOrEqual(decimal.RequireFromString("0.0001")) {
+			task.Status = "completed"
+		} else {
+			task.Status = "retrying"
+			s.logger.Warn("hedge partially filled, will retry",
+				zap.String("symbol", task.Symbol),
+				zap.String("filled", result.FilledSize.String()),
+				zap.String("remaining_drift", task.Drift.String()),
+			)
+		}
 		task.ErrorMessage = ""
 		return tx.Save(&task).Error
 	})
@@ -178,7 +199,7 @@ func (s *Service) captureSymbolRisk(sym model.Symbol) error {
 		}
 	}
 
-	drift := internalNet.Add(externalPos).Round(18)
+	drift := externalPos.Sub(internalNet).Round(18)
 	threshold := decimal.Max(sym.LotSize, decimal.RequireFromString("0.01"))
 	healthy := drift.Abs().LessThanOrEqual(threshold)
 

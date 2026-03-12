@@ -5,8 +5,6 @@ import { useEffect } from 'react'
 import AppLayout from './components/layout/AppLayout'
 import TradePage from './pages/TradePage'
 import AccountPage from './pages/AccountPage'
-import HistoryPage from './pages/HistoryPage'
-import AdminPage from './pages/AdminPage'
 import { useThemeStore } from './stores/themeStore'
 
 const queryClient = new QueryClient({
@@ -74,8 +72,6 @@ export default function App() {
               <Route element={<AppLayout />}>
                 <Route path="/" element={<TradePage />} />
                 <Route path="/account" element={<AccountPage />} />
-                <Route path="/history" element={<HistoryPage />} />
-                <Route path="/admin" element={<AdminPage />} />
               </Route>
             </Routes>
           </BrowserRouter>

@@ -93,8 +93,13 @@ func (s *LiquidatorService) liquidateUser(userID uint64) error {
 		if err != nil {
 			return err
 		}
+		markPrices, err := loadLatestMarkPrices(tx, positions)
+		if err != nil {
+			return err
+		}
 
 		for _, pos := range positions {
+			pos.MarkPrice = latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice)
 			sym := symbolMap[pos.Symbol]
 			originalMarkPrice := pos.MarkPrice
 			originalLiquidationPrice := pos.LiquidationPrice
