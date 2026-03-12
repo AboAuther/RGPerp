@@ -105,7 +105,7 @@ Response:
   "code": 0,
   "data": {
     "nonce": "a1b2c3d4e5f6...",
-    "message": "Welcome to PerpExchange!\n\nWallet: 0x1234...abcd\nNonce: a1b2c3d4e5f6...\nDomain: localhost\nChain ID: 31337\nTimestamp: 2026-03-12T10:00:00Z",
+    "message": "Welcome to RGPerp!\n\nWallet: 0x1234...abcd\nNonce: a1b2c3d4e5f6...\nDomain: localhost\nChain ID: 31337\nTimestamp: 2026-03-12T10:00:00Z",
     "expires_at": "2026-03-12T10:05:00Z"
   }
 }

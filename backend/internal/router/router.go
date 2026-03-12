@@ -3,8 +3,8 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/xiaobao/perpexchange/backend/internal/handler"
-	"github.com/xiaobao/perpexchange/backend/internal/middleware"
+	"github.com/AboAuther/RGPerp/backend/internal/handler"
+	"github.com/AboAuther/RGPerp/backend/internal/middleware"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

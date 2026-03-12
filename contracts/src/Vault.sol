@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-/// @title Vault - On-chain fund custody for PerpExchange
+/// @title Vault - On-chain fund custody for RGPerp
 /// @notice Users deposit/withdraw USDC. Withdrawals require operator signature.
 contract Vault is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;

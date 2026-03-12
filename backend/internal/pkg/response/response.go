@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	apperr "github.com/xiaobao/perpexchange/backend/internal/pkg/errors"
+	apperr "github.com/AboAuther/RGPerp/backend/internal/pkg/errors"
 )
 
 type Response struct {

@@ -1,10 +1,10 @@
 services:
   mysql:
     image: mysql:8.0
-    container_name: perp-mysql
+    container_name: rgperp-mysql
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: perp_exchange
+      MYSQL_DATABASE: rg_perp
       MYSQL_CHARSET: utf8mb4
     ports:
       - "3306:3306"
@@ -18,7 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: perp-redis
+    container_name: rgperp-redis
     ports:
       - "6379:6379"
     volumes:
@@ -31,7 +31,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: perp-rabbitmq
+    container_name: rgperp-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest

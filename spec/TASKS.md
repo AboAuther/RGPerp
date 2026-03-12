@@ -1,6 +1,6 @@
 # 项目实施里程碑
 
-本文档用于跟踪 PerpExchange 的实施进度。任务口径与 `spec/TECH_ARCHITECTURE.md`、`spec/DATABASE_SCHEMA.md`、`spec/API_SPEC.md` 保持一致，仅保留面向交付的实施事项，不记录需求讨论过程。
+本文档用于跟踪 RGPerp 的实施进度。任务口径与 `spec/TECH_ARCHITECTURE.md`、`spec/DATABASE_SCHEMA.md`、`spec/API_SPEC.md` 保持一致，仅保留面向交付的实施事项，不记录需求讨论过程。
 
 ## 使用方式
 

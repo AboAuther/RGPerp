@@ -1,4 +1,4 @@
-module github.com/xiaobao/perpexchange/backend
+module github.com/AboAuther/RGPerp/backend
 
 go 1.25.0
 

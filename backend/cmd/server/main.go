@@ -16,9 +16,9 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/xiaobao/perpexchange/backend/internal/config"
-	"github.com/xiaobao/perpexchange/backend/internal/model"
-	"github.com/xiaobao/perpexchange/backend/internal/router"
+	"github.com/AboAuther/RGPerp/backend/internal/config"
+	"github.com/AboAuther/RGPerp/backend/internal/model"
+	"github.com/AboAuther/RGPerp/backend/internal/router"
 )
 
 func main() {

@@ -23,7 +23,7 @@ Ant Design 覆盖 Table / Form / Modal / Notification / Layout / Tabs / Statisti
 ## 2. 项目目录结构
 
 ```text
-PerpExchange/
+RGPerp/
 ├── frontend/                          # React SPA
 │   ├── public/
 │   ├── src/
@@ -156,7 +156,7 @@ services:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: perp_exchange
+      MYSQL_DATABASE: rg_perp
     ports:
       - "3306:3306"
     volumes:
@@ -194,7 +194,7 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=root
-DB_NAME=perp_exchange
+DB_NAME=rg_perp
 
 # --- Redis ---
 REDIS_ADDR=localhost:6379

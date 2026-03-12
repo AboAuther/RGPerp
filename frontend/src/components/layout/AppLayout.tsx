@@ -33,7 +33,7 @@ export default function AppLayout() {
         }}
       >
         <Typography.Title level={4} style={{ margin: '0 24px 0 0', whiteSpace: 'nowrap' }}>
-          PerpExchange
+          RGPerp
         </Typography.Title>
         <Menu
           mode="horizontal"
@@ -47,7 +47,7 @@ export default function AppLayout() {
         <Outlet />
       </Content>
       <Footer style={{ textAlign: 'center', color: '#999' }}>
-        PerpExchange &copy; {new Date().getFullYear()}
+        RGPerp &copy; {new Date().getFullYear()}
       </Footer>
     </Layout>
   )

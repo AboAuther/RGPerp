@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/xiaobao/perpexchange/backend/internal/config"
+	"github.com/AboAuther/RGPerp/backend/internal/config"
 )
 
 func main() {

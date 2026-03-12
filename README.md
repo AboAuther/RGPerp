@@ -1,4 +1,4 @@
-# PerpExchange
+# RGPerp
 
 链上托管、链下交易、外部对冲的永续合约交易系统。
 
