@@ -9,6 +9,7 @@ type Order struct {
 	Symbol        string          `gorm:"type:varchar(20);index;not null" json:"symbol"`
 	Side          string          `gorm:"type:varchar(10);not null" json:"side"`
 	Type          string          `gorm:"type:varchar(20);not null" json:"type"`
+	MarginMode    string          `gorm:"type:varchar(20);default:'isolated';not null" json:"margin_mode"`
 	Size          decimal.Decimal `gorm:"type:decimal(36,18);not null" json:"size"`
 	Price         decimal.Decimal `gorm:"type:decimal(36,18)" json:"price"`
 	Leverage      uint32          `gorm:"not null" json:"leverage"`

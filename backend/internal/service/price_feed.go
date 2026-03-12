@@ -27,6 +27,17 @@ type PriceFeeder struct {
 	oracle        *OracleReader
 }
 
+type binancePremiumIndex struct {
+	Symbol          string `json:"symbol"`
+	MarkPrice       string `json:"markPrice"`
+	IndexPrice      string `json:"indexPrice"`
+	LastFundingRate string `json:"lastFundingRate"`
+	NextFundingTime int64  `json:"nextFundingTime"`
+	Time            int64  `json:"time"`
+	EstimatedSettle string `json:"estimatedSettlePrice"`
+	InterestRate    string `json:"interestRate"`
+}
+
 func NewPriceFeeder(db *gorm.DB, logger *zap.Logger, cfg *config.Config) *PriceFeeder {
 	return &PriceFeeder{
 		db:            db,
@@ -59,6 +70,8 @@ func (f *PriceFeeder) Run(ctx context.Context, interval time.Duration) {
 			switch strings.ToLower(strings.TrimSpace(f.cfg.Price.Source)) {
 			case "", "mock":
 				f.writeMockTicks(now, symbols, lastPrice)
+			case "binance":
+				f.writeBinanceTicks(now, symbols)
 			case "hyperliquid":
 				f.writeHyperliquidTicks(now, symbols)
 			case "oracle":
@@ -69,6 +82,62 @@ func (f *PriceFeeder) Run(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}
+}
+
+func (f *PriceFeeder) writeBinanceTicks(now time.Time, symbols []model.Symbol) {
+	for _, sym := range symbols {
+		premium, err := f.fetchBinancePremiumIndex(sym)
+		if err != nil {
+			f.logger.Warn("fetch binance premium index failed", zap.String("symbol", sym.Name), zap.Error(err))
+			continue
+		}
+		markPrice, err := decimal.NewFromString(premium.MarkPrice)
+		if err != nil || markPrice.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		indexPrice, _ := decimal.NewFromString(premium.IndexPrice)
+		fundingRate, _ := decimal.NewFromString(premium.LastFundingRate)
+		fundingNextAt := time.UnixMilli(premium.NextFundingTime).UTC()
+		bestBid := markPrice.Mul(decimal.RequireFromString("0.9998"))
+		bestAsk := markPrice.Mul(decimal.RequireFromString("1.0002"))
+		if err := f.marketService.UpsertTickWithDetails(
+			sym.Name,
+			markPrice,
+			indexPrice,
+			bestBid,
+			bestAsk,
+			fundingRate,
+			&fundingNextAt,
+			now,
+			"binance",
+		); err != nil {
+			f.logger.Warn("binance write tick failed", zap.String("symbol", sym.Name), zap.Error(err))
+		}
+	}
+}
+
+func (f *PriceFeeder) fetchBinancePremiumIndex(sym model.Symbol) (*binancePremiumIndex, error) {
+	binanceSymbol := fmt.Sprintf("%sUSDT", strings.ToUpper(sym.BaseAsset))
+	endpoint := strings.TrimRight(f.cfg.Binance.FuturesAPIURL, "/") + "/fapi/v1/premiumIndex?symbol=" + binanceSymbol
+
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := f.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	var data binancePremiumIndex
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+	return &data, nil
 }
 
 func (f *PriceFeeder) writeMockTicks(now time.Time, symbols []model.Symbol, lastPrice map[string]decimal.Decimal) {

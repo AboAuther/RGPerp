@@ -191,13 +191,25 @@ func (s *MarketService) buildTickerStats(symbol string, markPrice, indexPrice de
 		openInterest = openInterest.Add(position.Size.Abs().Mul(markPrice))
 	}
 
-	fundingRate := decimal.Zero
-	if indexPrice.GreaterThan(decimal.Zero) {
-		fundingRate = markPrice.Sub(indexPrice).Div(indexPrice).Mul(decimal.RequireFromString("0.1")).Round(6)
-	}
-
 	now := time.Now().UTC()
 	fundingNextAt := now.Truncate(time.Hour).Add(time.Hour)
+	fundingRate := decimal.Zero
+
+	var latestTick model.PriceTick
+	if err := s.db.Select("funding_rate", "funding_next_at").
+		Where("symbol = ?", symbol).
+		Order("created_at desc").
+		First(&latestTick).Error; err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	if latestTick.FundingRate.GreaterThan(decimal.Zero) || latestTick.FundingRate.LessThan(decimal.Zero) {
+		fundingRate = latestTick.FundingRate.Round(6)
+	} else if indexPrice.GreaterThan(decimal.Zero) {
+		fundingRate = markPrice.Sub(indexPrice).Div(indexPrice).Mul(decimal.RequireFromString("0.1")).Round(6)
+	}
+	if latestTick.FundingNextAt != nil && !latestTick.FundingNextAt.IsZero() {
+		fundingNextAt = latestTick.FundingNextAt.UTC()
+	}
 
 	return &tickerStats{
 		Change24H:     change24H,
@@ -210,6 +222,20 @@ func (s *MarketService) buildTickerStats(symbol string, markPrice, indexPrice de
 }
 
 func (s *MarketService) UpsertTick(symbol string, markPrice decimal.Decimal, ts time.Time, source string) error {
+	return s.UpsertTickWithDetails(symbol, markPrice, markPrice, decimal.Zero, decimal.Zero, decimal.Zero, nil, ts, source)
+}
+
+func (s *MarketService) UpsertTickWithDetails(
+	symbol string,
+	markPrice decimal.Decimal,
+	indexPrice decimal.Decimal,
+	bestBid decimal.Decimal,
+	bestAsk decimal.Decimal,
+	fundingRate decimal.Decimal,
+	fundingNextAt *time.Time,
+	ts time.Time,
+	source string,
+) error {
 	var symbolRow model.Symbol
 	tickSize := decimal.RequireFromString("0.000001")
 	if err := s.db.Select("tick_size").Where("name = ?", symbol).First(&symbolRow).Error; err == nil && symbolRow.TickSize.GreaterThan(decimal.Zero) {
@@ -217,19 +243,29 @@ func (s *MarketService) UpsertTick(symbol string, markPrice decimal.Decimal, ts 
 	}
 
 	markPrice = quantizeToStep(markPrice, tickSize)
-	indexPrice := markPrice
-	halfSpread := quantizeToStep(markPrice.Mul(decimal.RequireFromString("0.0002")), tickSize)
-	bestBid := markPrice.Sub(halfSpread)
-	bestAsk := markPrice.Add(halfSpread)
+	if indexPrice.LessThanOrEqual(decimal.Zero) {
+		indexPrice = markPrice
+	}
+	indexPrice = quantizeToStep(indexPrice, tickSize)
+	if bestBid.LessThanOrEqual(decimal.Zero) || bestAsk.LessThanOrEqual(decimal.Zero) {
+		halfSpread := quantizeToStep(markPrice.Mul(decimal.RequireFromString("0.0002")), tickSize)
+		bestBid = markPrice.Sub(halfSpread)
+		bestAsk = markPrice.Add(halfSpread)
+	} else {
+		bestBid = quantizeToStep(bestBid, tickSize)
+		bestAsk = quantizeToStep(bestAsk, tickSize)
+	}
 
 	return s.db.Create(&model.PriceTick{
-		Symbol:     symbol,
-		IndexPrice: indexPrice,
-		MarkPrice:  markPrice,
-		BestBid:    bestBid,
-		BestAsk:    bestAsk,
-		Source:     source,
-		CreatedAt:  ts.UTC(),
+		Symbol:        symbol,
+		IndexPrice:    indexPrice,
+		MarkPrice:     markPrice,
+		BestBid:       bestBid,
+		BestAsk:       bestAsk,
+		FundingRate:   fundingRate,
+		FundingNextAt: fundingNextAt,
+		Source:        source,
+		CreatedAt:     ts.UTC(),
 	}).Error
 }
 

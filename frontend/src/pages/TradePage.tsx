@@ -89,8 +89,13 @@ function formatCountdown(timestamp?: number): string {
 
 export default function TradePage() {
   const [symbol, setSymbol] = useState<string>('BTC-PERP')
+  const [positionFilterSymbol, setPositionFilterSymbol] = useState<string>('BTC-PERP')
+  const [openOrderFilterSymbol, setOpenOrderFilterSymbol] = useState<string>('BTC-PERP')
+  const [tradeFilterSymbol, setTradeFilterSymbol] = useState<string>('BTC-PERP')
+  const [orderHistoryFilterSymbol, setOrderHistoryFilterSymbol] = useState<string>('BTC-PERP')
   const [interval, setInterval] = useState<'1m' | '5m' | '15m' | '1h' | '1d'>('1m')
   const [orderForm] = Form.useForm()
+  const [partialCloseSizes, setPartialCloseSizes] = useState<Record<number, string>>({})
   const { mode } = useThemeStore()
   const isDark = mode === 'dark'
   const queryClient = useQueryClient()
@@ -114,6 +119,13 @@ export default function TradePage() {
       setSymbol(marketsQuery.data[0].name)
     }
   }, [marketsQuery.data, symbol])
+
+  useEffect(() => {
+    setPositionFilterSymbol(symbol)
+    setOpenOrderFilterSymbol(symbol)
+    setTradeFilterSymbol(symbol)
+    setOrderHistoryFilterSymbol(symbol)
+  }, [symbol])
 
   const tickerQuery = useQuery({
     queryKey: ['ticker', symbol],
@@ -210,6 +222,7 @@ export default function TradePage() {
   const orderMutation = useMutation({
     mutationFn: async (values: {
       side: 'long' | 'short'
+      margin_mode: 'isolated' | 'cross'
       size: string
       leverage: number
       reduce_only: boolean
@@ -219,6 +232,7 @@ export default function TradePage() {
           symbol,
           side: values.side,
           type: 'market',
+          margin_mode: values.margin_mode,
           size: values.size,
           leverage: Number(values.leverage),
           reduce_only: values.reduce_only,
@@ -240,6 +254,35 @@ export default function TradePage() {
     },
   })
 
+  const submitOrder = (values: {
+    side: 'long' | 'short'
+    margin_mode: 'isolated' | 'cross'
+    size: string
+    leverage: number
+    reduce_only: boolean
+  }) => {
+    orderMutation.mutate(values)
+  }
+
+  const submitPartialClose = (record: Position) => {
+    const size = partialCloseSizes[record.id]
+    if (!size || Number(size) <= 0) {
+      void messageApi.error('请输入部分平仓数量')
+      return
+    }
+    if (Number(size) > Number(record.size)) {
+      void messageApi.error('部分平仓数量不能超过当前持仓')
+      return
+    }
+    submitOrder({
+      side: record.side === 'long' ? 'short' : 'long',
+      margin_mode: record.margin_mode,
+      size,
+      leverage: record.leverage,
+      reduce_only: true,
+    })
+  }
+
   const marketOptions = useMemo(
     () =>
       (marketsQuery.data ?? []).map((item) => ({
@@ -250,6 +293,17 @@ export default function TradePage() {
   )
 
   const currentSymbol = (marketsQuery.data ?? []).find((item) => item.name === symbol)
+  const pairFilterOptions = useMemo(
+    () => [
+      { label: '当前交易对', value: symbol },
+      { label: '全部交易对', value: '__all__' },
+      ...(marketsQuery.data ?? []).map((item) => ({
+        label: formatPairLabel(item.base_asset, item.quote_asset, item.name),
+        value: item.name,
+      })),
+    ],
+    [marketsQuery.data, symbol],
+  )
   const displayPair = formatPairLabel(currentSymbol?.base_asset, currentSymbol?.quote_asset, tickerQuery.data?.display_pair ?? 'BTC/USDC')
   const symbolLabelMap = useMemo(
     () =>
@@ -260,77 +314,198 @@ export default function TradePage() {
   const selectedLeverage = Number(Form.useWatch('leverage', orderForm) ?? 10)
   const selectedSize = Number(Form.useWatch('size', orderForm) ?? 0)
   const selectedSide = Form.useWatch('side', orderForm) ?? 'long'
+  const selectedMarginMode = Form.useWatch('margin_mode', orderForm) ?? 'isolated'
   const estimatedNotional = markPrice * selectedSize
   const estimatedMargin = selectedLeverage > 0 ? estimatedNotional / selectedLeverage : 0
-  const estimatedFee = currentSymbol ? estimatedNotional * Number(currentSymbol.taker_fee_rate ?? 0) : 0
+  const takerFeeRate = Number(currentSymbol?.taker_fee_rate ?? 0)
+  const estimatedFee = estimatedNotional * takerFeeRate
+  const filteredPositions = useMemo(() => {
+    if (positionFilterSymbol === '__all__') {
+      return positionsQuery.data ?? []
+    }
+    return (positionsQuery.data ?? []).filter((item) => item.symbol === positionFilterSymbol)
+  }, [positionFilterSymbol, positionsQuery.data])
+
+  const filteredOpenOrders = useMemo(() => {
+    if (openOrderFilterSymbol === '__all__') {
+      return openOrdersQuery.data ?? []
+    }
+    return (openOrdersQuery.data ?? []).filter((item) => item.symbol === openOrderFilterSymbol)
+  }, [openOrderFilterSymbol, openOrdersQuery.data])
+
+  const filteredTrades = useMemo(() => {
+    if (tradeFilterSymbol === '__all__') {
+      return tradesQuery.data ?? []
+    }
+    return (tradesQuery.data ?? []).filter((item) => item.symbol === tradeFilterSymbol)
+  }, [tradeFilterSymbol, tradesQuery.data])
+
+  const filteredOrderHistory = useMemo(() => {
+    if (orderHistoryFilterSymbol === '__all__') {
+      return ordersQuery.data ?? []
+    }
+    return (ordersQuery.data ?? []).filter((item) => item.symbol === orderHistoryFilterSymbol)
+  }, [orderHistoryFilterSymbol, ordersQuery.data])
 
   const positionColumns = useMemo(
     () => [
-      { title: '交易对', dataIndex: 'symbol', key: 'symbol', render: (value: string) => symbolLabelMap.get(value) ?? value },
-      { title: '方向', dataIndex: 'side', key: 'side' },
-      { title: '数量', dataIndex: 'size', key: 'size', render: (value: string) => formatAmount(value, 4) },
-      { title: '开仓价', dataIndex: 'entry_price', key: 'entry_price', render: (value: string) => formatAmount(value, 2) },
-      { title: '标记价', dataIndex: 'mark_price', key: 'mark_price', render: (value: string) => formatAmount(value, 2) },
-      { title: '保证金', dataIndex: 'margin', key: 'margin', render: (value: string) => `${formatAmount(value)} USDC` },
+      { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 110, render: (value: string) => symbolLabelMap.get(value) ?? value },
+      {
+        title: '方向',
+        dataIndex: 'side',
+        key: 'side',
+        width: 82,
+        render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag>,
+      },
+      {
+        title: '模式',
+        dataIndex: 'margin_mode',
+        key: 'margin_mode',
+        width: 90,
+        render: (value: string) => <Tag color={value === 'cross' ? 'purple' : 'gold'}>{value}</Tag>,
+      },
+      { title: '数量', dataIndex: 'size', key: 'size', width: 84, render: (value: string) => formatAmount(value, 4) },
+      { title: '开仓价', dataIndex: 'entry_price', key: 'entry_price', width: 94, render: (value: string) => formatAmount(value, 2) },
+      { title: '标记价', dataIndex: 'mark_price', key: 'mark_price', width: 94, render: (value: string) => formatAmount(value, 2) },
+      { title: '保证金', dataIndex: 'margin', key: 'margin', width: 112, render: (value: string) => `${formatAmount(value)} USDC` },
       {
         title: '未实现盈亏',
         dataIndex: 'unrealized_pnl',
         key: 'unrealized_pnl',
+        width: 110,
         render: (value: string) => (
           <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>{formatAmount(value)}</Typography.Text>
         ),
       },
-      { title: '清算价', dataIndex: 'liquidation_price', key: 'liquidation_price', render: (value: string) => formatAmount(value, 2) },
+      { title: '风险率', dataIndex: 'risk_ratio', key: 'risk_ratio', width: 84, render: (value: string) => `${formatAmount(value, 2)}%` },
+      { title: '清算价', dataIndex: 'liquidation_price', key: 'liquidation_price', width: 84, render: (value: string) => formatAmount(value, 2) },
+      {
+        title: '操作',
+        key: 'actions',
+        width: 312,
+        render: (_: unknown, record: Position) => (
+          <div className="rg-position-actions">
+            <InputNumber
+              className="rg-position-actions-input"
+              size="small"
+              min={0}
+              max={Number(record.size)}
+              step={Number(record.size) >= 1 ? 0.1 : 0.001}
+              placeholder="部分平仓"
+              value={partialCloseSizes[record.id] ? Number(partialCloseSizes[record.id]) : undefined}
+              onChange={(value) =>
+                setPartialCloseSizes((current) => ({
+                  ...current,
+                  [record.id]: value === null ? '' : String(value),
+                }))
+              }
+            />
+            <Button
+              size="small"
+              className="rg-action-button"
+              onClick={() => submitPartialClose(record)}
+              loading={orderMutation.isPending}
+            >
+              部分平仓
+            </Button>
+            <Button
+              size="small"
+              className="rg-action-button"
+              onClick={() =>
+                submitOrder({
+                  side: record.side === 'long' ? 'short' : 'long',
+                  margin_mode: record.margin_mode,
+                  size: record.size,
+                  leverage: record.leverage,
+                  reduce_only: true,
+                })
+              }
+              loading={orderMutation.isPending}
+            >
+              平仓
+            </Button>
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              className="rg-action-button"
+              onClick={() =>
+                submitOrder({
+                  side: record.side === 'long' ? 'short' : 'long',
+                  margin_mode: record.margin_mode,
+                  size: String(Number(record.size) * 2),
+                  leverage: record.leverage,
+                  reduce_only: false,
+                })
+              }
+              loading={orderMutation.isPending}
+            >
+              反手
+            </Button>
+          </div>
+        ),
+      },
     ],
-    [symbolLabelMap],
+    [messageApi, orderMutation.isPending, partialCloseSizes, symbolLabelMap],
   )
 
   const tradeColumns = useMemo(
     () => [
-      { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (value: string) => new Date(value).toLocaleString() },
-      { title: '交易对', dataIndex: 'symbol', key: 'symbol', render: (value: string) => symbolLabelMap.get(value) ?? value },
-      { title: '方向', dataIndex: 'side', key: 'side', render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag> },
-      { title: '数量', dataIndex: 'size', key: 'size', render: (value: string) => formatAmount(value, 4) },
-      { title: '成交价', dataIndex: 'price', key: 'price', render: (value: string) => formatAmount(value, 2) },
-      { title: '手续费', dataIndex: 'fee', key: 'fee', render: (value: string) => formatAmount(value) },
+      { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 168, render: (value: string) => new Date(value).toLocaleString() },
+      { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 110, render: (value: string) => symbolLabelMap.get(value) ?? value },
+      { title: '方向', dataIndex: 'side', key: 'side', width: 82, render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag> },
+      { title: '数量', dataIndex: 'size', key: 'size', width: 84, render: (value: string) => formatAmount(value, 4) },
+      { title: '成交价', dataIndex: 'price', key: 'price', width: 96, render: (value: string) => formatAmount(value, 2) },
+      { title: '手续费', dataIndex: 'fee', key: 'fee', width: 94, render: (value: string) => formatAmount(value) },
       {
         title: '已实现盈亏',
         dataIndex: 'realized_pnl',
         key: 'realized_pnl',
+        width: 110,
         render: (value: string) => (
           <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>{formatAmount(value)}</Typography.Text>
         ),
       },
-      { title: '类型', dataIndex: 'is_liquidation', key: 'is_liquidation', render: (value: boolean) => <Tag color={value ? 'volcano' : 'geekblue'}>{value ? 'liquidation' : 'trade'}</Tag> },
+      {
+        title: '类型',
+        dataIndex: 'is_liquidation',
+        key: 'is_liquidation',
+        width: 120,
+        render: (value: boolean) => <Tag color={value ? 'volcano' : 'geekblue'}>{value ? 'liquidation' : 'trade'}</Tag>,
+      },
     ],
     [symbolLabelMap],
   )
 
   const topPosition = (positionsQuery.data ?? [])[0]
-  const maintenanceMargin = topPosition ? Number(topPosition.margin) * 0.5 : 0
-  const marginRatio = topPosition && Number(topPosition.margin) > 0 ? (maintenanceMargin / Number(topPosition.margin)) * 100 : 0
+  const marginRatio = topPosition ? Number(topPosition.risk_ratio ?? 0) : 0
   const liquidationDistance = topPosition
-    ? ((Number(topPosition.mark_price) - Number(topPosition.liquidation_price)) / Math.max(Number(topPosition.mark_price), 1)) * 100
+    ? topPosition.side === 'long'
+      ? ((Number(topPosition.mark_price) - Number(topPosition.liquidation_price)) / Math.max(Number(topPosition.mark_price), 1)) * 100
+      : ((Number(topPosition.liquidation_price) - Number(topPosition.mark_price)) / Math.max(Number(topPosition.mark_price), 1)) * 100
     : 0
 
   const orderColumns = useMemo(
     () => [
-      { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (value: string) => new Date(value).toLocaleString() },
-      { title: '交易对', dataIndex: 'symbol', key: 'symbol', render: (value: string) => symbolLabelMap.get(value) ?? value },
+      { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 168, render: (value: string) => new Date(value).toLocaleString() },
+      { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 110, render: (value: string) => symbolLabelMap.get(value) ?? value },
       {
         title: '方向',
         dataIndex: 'side',
         key: 'side',
+        width: 82,
         render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag>,
       },
-      { title: '数量', dataIndex: 'size', key: 'size', render: (value: string) => formatAmount(value, 4) },
-      { title: '成交价', dataIndex: 'exec_price', key: 'exec_price', render: (value: string) => formatAmount(value, 2) },
-      { title: '杠杆', dataIndex: 'leverage', key: 'leverage', render: (value: number) => `${value}x` },
-      { title: '手续费', dataIndex: 'fee', key: 'fee', render: (value: string) => formatAmount(value) },
+      { title: '模式', dataIndex: 'margin_mode', key: 'margin_mode', width: 92, render: (value: string) => <Tag color={value === 'cross' ? 'purple' : 'gold'}>{value}</Tag> },
+      { title: '数量', dataIndex: 'size', key: 'size', width: 84, render: (value: string) => formatAmount(value, 4) },
+      { title: '成交价', dataIndex: 'exec_price', key: 'exec_price', width: 96, render: (value: string) => formatAmount(value, 2) },
+      { title: '杠杆', dataIndex: 'leverage', key: 'leverage', width: 72, render: (value: number) => `${value}x` },
+      { title: '手续费', dataIndex: 'fee', key: 'fee', width: 94, render: (value: string) => formatAmount(value) },
       {
         title: '已实现盈亏',
         dataIndex: 'realized_pnl',
         key: 'realized_pnl',
+        width: 110,
         render: (value: string) => (
           <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>{formatAmount(value)}</Typography.Text>
         ),
@@ -339,6 +514,7 @@ export default function TradePage() {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
+        width: 92,
         render: (value: string) => <Tag color={value === 'filled' ? 'cyan' : 'default'}>{value}</Tag>,
       },
     ],
@@ -379,7 +555,7 @@ export default function TradePage() {
                 </Typography.Title>
               </Col>
               <Col xs={12} md={8} xl={4}>
-                <Typography.Text type="secondary">Oracle</Typography.Text>
+                <Typography.Text type="secondary">Oracle / Index</Typography.Text>
                 <Typography.Title level={4} style={{ margin: 0 }}>
                   {formatAmount(tickerQuery.data?.index_price, 2)}
                 </Typography.Title>
@@ -433,7 +609,7 @@ export default function TradePage() {
                 <Space size={10}>
                   <Typography.Text strong>{displayPair}</Typography.Text>
                   <Tag color="cyan">TradingView</Tag>
-                  <Tag color="blue">Live Market Feed</Tag>
+                  <Tag color="blue">Binance Futures</Tag>
                 </Space>
               </Col>
             </Row>
@@ -488,11 +664,14 @@ export default function TradePage() {
                 <Form
                   form={orderForm}
                   layout="vertical"
-                  initialValues={{ side: 'long', leverage: 10, reduce_only: false }}
+                  initialValues={{ side: 'long', margin_mode: 'isolated', leverage: 10, reduce_only: false }}
                   onFinish={(values) => orderMutation.mutate(values)}
                 >
                   <Form.Item label="方向" name="side">
                     <Segmented block options={[{ label: '做多', value: 'long' }, { label: '做空', value: 'short' }]} />
+                  </Form.Item>
+                  <Form.Item label="保证金模式" name="margin_mode">
+                    <Segmented block options={[{ label: '逐仓', value: 'isolated' }, { label: '全仓', value: 'cross' }]} />
                   </Form.Item>
                   <Form.Item
                     label="数量"
@@ -517,9 +696,10 @@ export default function TradePage() {
                   <Card size="small" style={{ marginBottom: 16 }}>
                     <Descriptions size="small" column={1}>
                       <Descriptions.Item label="方向">{selectedSide === 'long' ? '做多 Long' : '做空 Short'}</Descriptions.Item>
+                      <Descriptions.Item label="模式">{selectedMarginMode === 'cross' ? '全仓 Cross' : '逐仓 Isolated'}</Descriptions.Item>
                       <Descriptions.Item label="名义价值">{formatAmount(estimatedNotional, 2)} USDC</Descriptions.Item>
-                      <Descriptions.Item label="预估保证金">{formatAmount(estimatedMargin)} USDC</Descriptions.Item>
-                      <Descriptions.Item label="预估手续费">{formatAmount(estimatedFee)} USDC</Descriptions.Item>
+                      <Descriptions.Item label="预估开仓保证金">{formatAmount(estimatedMargin)} USDC</Descriptions.Item>
+                      <Descriptions.Item label="预估手续费">{formatAmount(estimatedFee)} USDC ({formatAmount(takerFeeRate * 100, 4)}%)</Descriptions.Item>
                     </Descriptions>
                   </Card>
                   <Button type="primary" htmlType="submit" block loading={orderMutation.isPending}>
@@ -531,6 +711,7 @@ export default function TradePage() {
                   <Card size="small">
                     <Descriptions size="small" column={1}>
                       <Descriptions.Item label="成交价">{formatAmount(latestExecution.order.exec_price, 2)}</Descriptions.Item>
+                      <Descriptions.Item label="保证金模式">{latestExecution.order.margin_mode === 'cross' ? '全仓 Cross' : '逐仓 Isolated'}</Descriptions.Item>
                       <Descriptions.Item label="手续费">{formatAmount(latestExecution.order.fee)}</Descriptions.Item>
                       <Descriptions.Item label="可用余额">{formatAmount(latestExecution.account.available_balance)}</Descriptions.Item>
                     </Descriptions>
@@ -579,15 +760,27 @@ export default function TradePage() {
                   children: !authenticated ? (
                     <Typography.Text type="secondary">登录后可查看实时持仓与盈亏。</Typography.Text>
                   ) : (
-                    <Table
-                      rowKey="id"
-                      loading={positionsQuery.isLoading}
-                      dataSource={positionsQuery.data ?? []}
-                      columns={positionColumns}
-                      pagination={false}
-                      locale={{ emptyText: '当前无持仓' }}
-                      scroll={{ x: 960 }}
-                    />
+                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                      <div className="rg-positions-toolbar">
+                        <Typography.Text type="secondary">仓位筛选</Typography.Text>
+                        <Select
+                          value={positionFilterSymbol}
+                          options={pairFilterOptions}
+                          onChange={(value) => setPositionFilterSymbol(value)}
+                          style={{ minWidth: 180 }}
+                          size="small"
+                        />
+                      </div>
+                      <Table
+                        rowKey="id"
+                        loading={positionsQuery.isLoading}
+                        dataSource={filteredPositions}
+                        columns={positionColumns}
+                        pagination={false}
+                        locale={{ emptyText: '当前筛选条件下无持仓' }}
+                        scroll={{ x: 1260 }}
+                      />
+                    </Space>
                   ),
                 },
                 {
@@ -596,15 +789,27 @@ export default function TradePage() {
                   children: !authenticated ? (
                     <Typography.Text type="secondary">登录后可查看挂单。</Typography.Text>
                   ) : (
-                    <Table
-                      rowKey="id"
-                      loading={openOrdersQuery.isLoading}
-                      dataSource={openOrdersQuery.data ?? []}
-                      columns={orderColumns}
-                      pagination={false}
-                      locale={{ emptyText: '当前无挂单' }}
-                      scroll={{ x: 1080 }}
-                    />
+                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                      <div className="rg-positions-toolbar">
+                        <Typography.Text type="secondary">挂单筛选</Typography.Text>
+                        <Select
+                          value={openOrderFilterSymbol}
+                          options={pairFilterOptions}
+                          onChange={(value) => setOpenOrderFilterSymbol(value)}
+                          style={{ minWidth: 180 }}
+                          size="small"
+                        />
+                      </div>
+                      <Table
+                        rowKey="id"
+                        loading={openOrdersQuery.isLoading}
+                        dataSource={filteredOpenOrders}
+                        columns={orderColumns}
+                        pagination={false}
+                        locale={{ emptyText: '当前筛选条件下无挂单' }}
+                        scroll={{ x: 1040 }}
+                      />
+                    </Space>
                   ),
                 },
                 {
@@ -613,15 +818,27 @@ export default function TradePage() {
                   children: !authenticated ? (
                     <Typography.Text type="secondary">登录后可查看成交记录。</Typography.Text>
                   ) : (
-                    <Table
-                      rowKey="id"
-                      loading={tradesQuery.isLoading}
-                      dataSource={tradesQuery.data ?? []}
-                      columns={tradeColumns}
-                      pagination={false}
-                      locale={{ emptyText: '暂无成交记录' }}
-                      scroll={{ x: 1080 }}
-                    />
+                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                      <div className="rg-positions-toolbar">
+                        <Typography.Text type="secondary">成交筛选</Typography.Text>
+                        <Select
+                          value={tradeFilterSymbol}
+                          options={pairFilterOptions}
+                          onChange={(value) => setTradeFilterSymbol(value)}
+                          style={{ minWidth: 180 }}
+                          size="small"
+                        />
+                      </div>
+                      <Table
+                        rowKey="id"
+                        loading={tradesQuery.isLoading}
+                        dataSource={filteredTrades}
+                        columns={tradeColumns}
+                        pagination={false}
+                        locale={{ emptyText: '当前筛选条件下无成交记录' }}
+                        scroll={{ x: 980 }}
+                      />
+                    </Space>
                   ),
                 },
                 {
@@ -630,15 +847,27 @@ export default function TradePage() {
                   children: !authenticated ? (
                     <Typography.Text type="secondary">登录后可查看订单历史。</Typography.Text>
                   ) : (
-                    <Table
-                      rowKey="id"
-                      loading={ordersQuery.isLoading}
-                      dataSource={ordersQuery.data ?? []}
-                      columns={orderColumns}
-                      pagination={false}
-                      locale={{ emptyText: '暂无订单记录' }}
-                      scroll={{ x: 1080 }}
-                    />
+                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                      <div className="rg-positions-toolbar">
+                        <Typography.Text type="secondary">订单筛选</Typography.Text>
+                        <Select
+                          value={orderHistoryFilterSymbol}
+                          options={pairFilterOptions}
+                          onChange={(value) => setOrderHistoryFilterSymbol(value)}
+                          style={{ minWidth: 180 }}
+                          size="small"
+                        />
+                      </div>
+                      <Table
+                        rowKey="id"
+                        loading={ordersQuery.isLoading}
+                        dataSource={filteredOrderHistory}
+                        columns={orderColumns}
+                        pagination={false}
+                        locale={{ emptyText: '当前筛选条件下无订单记录' }}
+                        scroll={{ x: 1040 }}
+                      />
+                    </Space>
                   ),
                 },
               ]}

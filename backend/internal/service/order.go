@@ -26,6 +26,7 @@ type CreateOrderInput struct {
 	Symbol        string
 	Side          string
 	Type          string
+	MarginMode    string
 	Size          decimal.Decimal
 	Leverage      uint32
 	Margin        decimal.Decimal
@@ -44,18 +45,22 @@ type AccountBalanceBrief struct {
 }
 
 type PositionListItem struct {
-	ID               uint64          `json:"id"`
-	Symbol           string          `json:"symbol"`
-	Side             string          `json:"side"`
-	Size             decimal.Decimal `json:"size"`
-	EntryPrice       decimal.Decimal `json:"entry_price"`
-	MarkPrice        decimal.Decimal `json:"mark_price"`
-	LiquidationPrice decimal.Decimal `json:"liquidation_price"`
-	Margin           decimal.Decimal `json:"margin"`
-	Leverage         uint32          `json:"leverage"`
-	UnrealizedPnL    decimal.Decimal `json:"unrealized_pnl"`
-	RealizedPnL      decimal.Decimal `json:"realized_pnl"`
-	Status           string          `json:"status"`
+	ID                uint64          `json:"id"`
+	Symbol            string          `json:"symbol"`
+	Side              string          `json:"side"`
+	MarginMode        string          `json:"margin_mode"`
+	Size              decimal.Decimal `json:"size"`
+	EntryPrice        decimal.Decimal `json:"entry_price"`
+	MarkPrice         decimal.Decimal `json:"mark_price"`
+	LiquidationPrice  decimal.Decimal `json:"liquidation_price"`
+	Margin            decimal.Decimal `json:"margin"`
+	Notional          decimal.Decimal `json:"notional"`
+	MaintenanceMargin decimal.Decimal `json:"maintenance_margin"`
+	RiskRatio         decimal.Decimal `json:"risk_ratio"`
+	Leverage          uint32          `json:"leverage"`
+	UnrealizedPnL     decimal.Decimal `json:"unrealized_pnl"`
+	RealizedPnL       decimal.Decimal `json:"realized_pnl"`
+	Status            string          `json:"status"`
 }
 
 type OrderListItem struct {
@@ -64,6 +69,7 @@ type OrderListItem struct {
 	Symbol        string          `json:"symbol"`
 	Side          string          `json:"side"`
 	Type          string          `json:"type"`
+	MarginMode    string          `json:"margin_mode"`
 	Size          decimal.Decimal `json:"size"`
 	ExecPrice     decimal.Decimal `json:"exec_price"`
 	Leverage      uint32          `json:"leverage"`
@@ -92,11 +98,15 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 	input.Symbol = strings.ToUpper(strings.TrimSpace(input.Symbol))
 	input.Side = strings.ToLower(strings.TrimSpace(input.Side))
 	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
+	input.MarginMode = normalizeMarginMode(input.MarginMode)
 
 	if input.Type != "market" {
 		return nil, apperr.ErrOrderRejected
 	}
 	if input.Side != "long" && input.Side != "short" {
+		return nil, apperr.ErrOrderRejected
+	}
+	if input.MarginMode == "" {
 		return nil, apperr.ErrOrderRejected
 	}
 	if input.Size.LessThanOrEqual(decimal.Zero) {
@@ -175,6 +185,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			Symbol:        input.Symbol,
 			Side:          input.Side,
 			Type:          input.Type,
+			MarginMode:    input.MarginMode,
 			Size:          input.Size,
 			Price:         price,
 			Leverage:      input.Leverage,
@@ -194,6 +205,13 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 		marginConsumed := decimal.Zero
 		marginReleased := decimal.Zero
 		var positionOut *PositionListItem
+		activeMarginMode := input.MarginMode
+		if hasPosition {
+			activeMarginMode = existing.MarginMode
+			if existing.MarginMode != input.MarginMode && (existing.Side == input.Side || input.Size.GreaterThan(existing.Size)) {
+				return apperr.ErrOrderRejected
+			}
+		}
 
 		if !hasPosition {
 			if input.ReduceOnly {
@@ -212,10 +230,11 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				UserID:           input.UserID,
 				Symbol:           input.Symbol,
 				Side:             input.Side,
+				MarginMode:       input.MarginMode,
 				Size:             input.Size,
 				EntryPrice:       price,
 				MarkPrice:        price,
-				LiquidationPrice: calculateLiquidationPrice(input.Side, price, input.Size, requiredMargin, symbol.MaintenanceMarginRate),
+				LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, input.Size, requiredMargin, symbol.MaintenanceMarginRate),
 				Margin:           requiredMargin,
 				Leverage:         input.Leverage,
 				Status:           "open",
@@ -223,7 +242,11 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			if err := tx.Create(&position).Error; err != nil {
 				return err
 			}
-			positionOut = buildPositionOutput(position, price)
+			builtPosition, buildErr := s.buildPositionOutput(tx, account, position, price, symbol.MaintenanceMarginRate)
+			if buildErr != nil {
+				return buildErr
+			}
+			positionOut = builtPosition
 
 			if err := tx.Create(&model.Trade{
 				OrderID:     order.ID,
@@ -261,7 +284,8 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				existing.EntryPrice = newEntry
 				existing.MarkPrice = price
 				existing.Leverage = input.Leverage
-				existing.LiquidationPrice = calculateLiquidationPrice(existing.Side, existing.EntryPrice, existing.Size, existing.Margin, symbol.MaintenanceMarginRate)
+				existing.MarginMode = activeMarginMode
+				existing.LiquidationPrice = calculateLiquidationPrice(existing.Side, activeMarginMode, existing.EntryPrice, existing.Size, existing.Margin, symbol.MaintenanceMarginRate)
 				if err := tx.Save(&existing).Error; err != nil {
 					return err
 				}
@@ -290,11 +314,15 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					existing.Size = remainingSize
 					existing.Margin = remainingMargin
 					existing.MarkPrice = price
-					existing.LiquidationPrice = calculateLiquidationPrice(existing.Side, existing.EntryPrice, existing.Size, existing.Margin, symbol.MaintenanceMarginRate)
+					existing.LiquidationPrice = calculateLiquidationPrice(existing.Side, activeMarginMode, existing.EntryPrice, existing.Size, existing.Margin, symbol.MaintenanceMarginRate)
 					if err := tx.Save(&existing).Error; err != nil {
 						return err
 					}
-					positionOut = buildPositionOutput(existing, price)
+					builtPosition, buildErr := s.buildPositionOutput(tx, account, existing, price, symbol.MaintenanceMarginRate)
+					if buildErr != nil {
+						return buildErr
+					}
+					positionOut = builtPosition
 				}
 
 				flipSize := input.Size.Sub(closeSize)
@@ -317,10 +345,11 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						UserID:           input.UserID,
 						Symbol:           input.Symbol,
 						Side:             input.Side,
+						MarginMode:       input.MarginMode,
 						Size:             flipSize,
 						EntryPrice:       price,
 						MarkPrice:        price,
-						LiquidationPrice: calculateLiquidationPrice(input.Side, price, flipSize, flipMargin, symbol.MaintenanceMarginRate),
+						LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, flipSize, flipMargin, symbol.MaintenanceMarginRate),
 						Margin:           flipMargin,
 						Leverage:         input.Leverage,
 						Status:           "open",
@@ -328,7 +357,11 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					if err := tx.Create(&newPos).Error; err != nil {
 						return err
 					}
-					positionOut = buildPositionOutput(newPos, price)
+					builtPosition, buildErr := s.buildPositionOutput(tx, account, newPos, price, symbol.MaintenanceMarginRate)
+					if buildErr != nil {
+						return buildErr
+					}
+					positionOut = builtPosition
 				}
 			}
 
@@ -417,6 +450,16 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 		if err := tx.Save(&account).Error; err != nil {
 			return err
 		}
+		if err := s.createMockHedgeTask(tx, input.Symbol, "trade", price); err != nil {
+			return err
+		}
+		if positionOut != nil {
+			refreshedPosition, refreshErr := s.refreshPositionOutput(tx, account, positionOut.ID)
+			if refreshErr != nil {
+				return refreshErr
+			}
+			positionOut = refreshedPosition
+		}
 
 		response = &OrderExecutionOutput{
 			Order:    order,
@@ -435,14 +478,34 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 }
 
 func (s *OrderService) ListOpenPositions(userID uint64) ([]PositionListItem, error) {
+	var account model.Account
+	if err := s.db.Where("user_id = ?", userID).First(&account).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return []PositionListItem{}, nil
+		}
+		return nil, err
+	}
+
 	var positions []model.Position
 	if err := s.db.Where("user_id = ? AND status = ?", userID, "open").Order("updated_at desc").Find(&positions).Error; err != nil {
+		return nil, err
+	}
+	symbols, err := s.loadSymbolMap(positions)
+	if err != nil {
 		return nil, err
 	}
 
 	items := make([]PositionListItem, 0, len(positions))
 	for _, pos := range positions {
-		items = append(items, buildPositionOutputValue(pos, pos.MarkPrice))
+		maintenanceRate := decimal.Zero
+		if sym, ok := symbols[pos.Symbol]; ok {
+			maintenanceRate = sym.MaintenanceMarginRate
+		}
+		item, err := s.buildPositionOutput(s.db, account, pos, pos.MarkPrice, maintenanceRate)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
 	}
 	return items, nil
 }
@@ -468,6 +531,7 @@ func (s *OrderService) ListOrders(userID uint64, limit int) ([]OrderListItem, er
 			Symbol:        order.Symbol,
 			Side:          order.Side,
 			Type:          order.Type,
+			MarginMode:    order.MarginMode,
 			Size:          order.Size,
 			ExecPrice:     order.ExecPrice,
 			Leverage:      order.Leverage,
@@ -506,6 +570,7 @@ func (s *OrderService) ListOpenOrders(userID uint64, limit int) ([]OrderListItem
 			Symbol:        order.Symbol,
 			Side:          order.Side,
 			Type:          order.Type,
+			MarginMode:    order.MarginMode,
 			Size:          order.Size,
 			ExecPrice:     order.ExecPrice,
 			Leverage:      order.Leverage,
@@ -551,27 +616,50 @@ func (s *OrderService) ListTrades(userID uint64, limit int) ([]TradeListItem, er
 	return items, nil
 }
 
-func buildPositionOutput(pos model.Position, markPrice decimal.Decimal) *PositionListItem {
-	item := buildPositionOutputValue(pos, markPrice)
-	return &item
+func (s *OrderService) refreshPositionOutput(tx *gorm.DB, account model.Account, positionID uint64) (*PositionListItem, error) {
+	var pos model.Position
+	if err := tx.Where("id = ?", positionID).First(&pos).Error; err != nil {
+		return nil, err
+	}
+	var symbol model.Symbol
+	if err := tx.Where("name = ?", pos.Symbol).First(&symbol).Error; err != nil {
+		return nil, err
+	}
+	return s.buildPositionOutput(tx, account, pos, pos.MarkPrice, symbol.MaintenanceMarginRate)
 }
 
-func buildPositionOutputValue(pos model.Position, markPrice decimal.Decimal) PositionListItem {
-	unrealized := calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size).Round(18)
-	return PositionListItem{
-		ID:               pos.ID,
-		Symbol:           pos.Symbol,
-		Side:             pos.Side,
-		Size:             pos.Size,
-		EntryPrice:       pos.EntryPrice,
-		MarkPrice:        markPrice,
-		LiquidationPrice: pos.LiquidationPrice,
-		Margin:           pos.Margin,
-		Leverage:         pos.Leverage,
-		UnrealizedPnL:    unrealized,
-		RealizedPnL:      pos.RealizedPnL,
-		Status:           pos.Status,
+func (s *OrderService) buildPositionOutput(tx *gorm.DB, account model.Account, pos model.Position, markPrice, maintenanceRate decimal.Decimal) (*PositionListItem, error) {
+	effectiveMargin, err := s.positionEffectiveMargin(tx, account, pos, markPrice)
+	if err != nil {
+		return nil, err
 	}
+	unrealized := calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size).Round(18)
+	notional := markPrice.Mul(pos.Size).Round(18)
+	maintenanceMargin := notional.Mul(maintenanceRate).Round(18)
+	equity := effectiveMargin.Add(unrealized)
+	riskRatio := decimal.Zero
+	if equity.GreaterThan(decimal.Zero) {
+		riskRatio = maintenanceMargin.Div(equity).Mul(decimal.NewFromInt(100)).Round(6)
+	}
+
+	return &PositionListItem{
+		ID:                pos.ID,
+		Symbol:            pos.Symbol,
+		Side:              pos.Side,
+		MarginMode:        pos.MarginMode,
+		Size:              pos.Size,
+		EntryPrice:        pos.EntryPrice,
+		MarkPrice:         markPrice,
+		LiquidationPrice:  calculateLiquidationPrice(pos.Side, pos.MarginMode, pos.EntryPrice, pos.Size, effectiveMargin, maintenanceRate),
+		Margin:            pos.Margin,
+		Notional:          notional,
+		MaintenanceMargin: maintenanceMargin,
+		RiskRatio:         riskRatio,
+		Leverage:          pos.Leverage,
+		UnrealizedPnL:     unrealized,
+		RealizedPnL:       pos.RealizedPnL,
+		Status:            pos.Status,
+	}, nil
 }
 
 func calculatePnL(side string, entryPrice, exitPrice, size decimal.Decimal) decimal.Decimal {
@@ -585,7 +673,7 @@ func calculatePnL(side string, entryPrice, exitPrice, size decimal.Decimal) deci
 	}
 }
 
-func calculateLiquidationPrice(side string, entryPrice, size, margin, maintenanceRate decimal.Decimal) decimal.Decimal {
+func calculateLiquidationPrice(side, marginMode string, entryPrice, size, margin, maintenanceRate decimal.Decimal) decimal.Decimal {
 	if size.LessThanOrEqual(decimal.Zero) || entryPrice.LessThanOrEqual(decimal.Zero) {
 		return decimal.Zero
 	}
@@ -596,7 +684,7 @@ func calculateLiquidationPrice(side string, entryPrice, size, margin, maintenanc
 		if denominator.IsZero() {
 			return decimal.Zero
 		}
-		return entryPrice.Mul(size).Sub(margin).Div(denominator).Round(18)
+		return decimal.Max(entryPrice.Mul(size).Sub(margin).Div(denominator).Round(18), decimal.Zero)
 	case "short":
 		denominator := size.Mul(decimal.NewFromInt(1).Add(maintenanceRate))
 		if denominator.IsZero() {
@@ -606,4 +694,128 @@ func calculateLiquidationPrice(side string, entryPrice, size, margin, maintenanc
 	default:
 		return decimal.Zero
 	}
+}
+
+func normalizeMarginMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "", "isolated":
+		return "isolated"
+	case "cross":
+		return "cross"
+	default:
+		return ""
+	}
+}
+
+func (s *OrderService) loadSymbolMap(positions []model.Position) (map[string]model.Symbol, error) {
+	if len(positions) == 0 {
+		return map[string]model.Symbol{}, nil
+	}
+	names := make([]string, 0, len(positions))
+	seen := make(map[string]struct{}, len(positions))
+	for _, pos := range positions {
+		if _, ok := seen[pos.Symbol]; ok {
+			continue
+		}
+		seen[pos.Symbol] = struct{}{}
+		names = append(names, pos.Symbol)
+	}
+	var symbols []model.Symbol
+	if err := s.db.Where("name IN ?", names).Find(&symbols).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]model.Symbol, len(symbols))
+	for _, sym := range symbols {
+		out[sym.Name] = sym
+	}
+	return out, nil
+}
+
+func (s *OrderService) positionEffectiveMargin(tx *gorm.DB, account model.Account, pos model.Position, markPrice decimal.Decimal) (decimal.Decimal, error) {
+	if pos.MarginMode != "cross" {
+		return pos.Margin, nil
+	}
+
+	var crossPositions []model.Position
+	if err := tx.Where("user_id = ? AND status = ? AND margin_mode = ?", pos.UserID, "open", "cross").Find(&crossPositions).Error; err != nil {
+		return decimal.Zero, err
+	}
+	if len(crossPositions) == 0 {
+		return pos.Margin, nil
+	}
+
+	totalCrossNotional := decimal.Zero
+	positionNotional := markPrice.Mul(pos.Size)
+	for _, item := range crossPositions {
+		itemPrice := item.MarkPrice
+		if item.ID == pos.ID {
+			itemPrice = markPrice
+		}
+		notional := itemPrice.Mul(item.Size)
+		totalCrossNotional = totalCrossNotional.Add(notional)
+		if item.ID == pos.ID {
+			positionNotional = notional
+		}
+	}
+	if totalCrossNotional.LessThanOrEqual(decimal.Zero) {
+		return pos.Margin, nil
+	}
+
+	sharedCollateral := account.AvailableBalance
+	allocation := sharedCollateral.Mul(positionNotional).Div(totalCrossNotional).Round(18)
+	return pos.Margin.Add(allocation), nil
+}
+
+func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType string, markPrice decimal.Decimal) error {
+	var positions []model.Position
+	if err := tx.Where("symbol = ? AND status = ?", symbol, "open").Find(&positions).Error; err != nil {
+		return err
+	}
+
+	internalNet := decimal.Zero
+	for _, pos := range positions {
+		if pos.Side == "long" {
+			internalNet = internalNet.Add(pos.Size)
+		} else {
+			internalNet = internalNet.Sub(pos.Size)
+		}
+	}
+	target := internalNet.Round(18)
+	status := "noop"
+	side := ""
+	size := target.Abs()
+	if !target.IsZero() {
+		status = "pending"
+		if target.GreaterThan(decimal.Zero) {
+			side = "long"
+		} else {
+			side = "short"
+		}
+	}
+
+	task := model.HedgeTask{
+		Symbol:               symbol,
+		TriggerType:          triggerType,
+		InternalNetPosition:  internalNet,
+		TargetHedgePosition:  target,
+		CurrentHedgePosition: decimal.Zero,
+		Drift:                target,
+		Status:               status,
+	}
+	if err := tx.Create(&task).Error; err != nil {
+		return err
+	}
+	if status == "noop" {
+		return nil
+	}
+	return tx.Create(&model.HedgeOrder{
+		HedgeTaskID:     task.ID,
+		Symbol:          symbol,
+		Side:            side,
+		Size:            size,
+		Price:           markPrice,
+		ExternalOrderID: fmt.Sprintf("mock-%s-%d", strings.ToLower(symbol), task.ID),
+		Status:          "mock_pending",
+	}).Error
 }

@@ -25,19 +25,26 @@ export interface Account {
   locked_balance: string
   pending_withdrawal: string
   withdrawable_balance: string
+  unrealized_pnl: string
   equity: string
+  maintenance_margin: string
+  margin_ratio: string
+  risk_level: string
 }
 
 export interface Position {
   id: number
-  user_id: number
   symbol: string
   side: 'long' | 'short'
+  margin_mode: 'isolated' | 'cross'
   size: string
   entry_price: string
   mark_price: string
   liquidation_price: string
   margin: string
+  notional: string
+  maintenance_margin: string
+  risk_ratio: string
   leverage: number
   unrealized_pnl: string
   realized_pnl: string
@@ -51,6 +58,7 @@ export interface Order {
   symbol: string
   side: 'long' | 'short'
   type: string
+  margin_mode: 'isolated' | 'cross'
   size: string
   price: string
   leverage: number
@@ -70,6 +78,7 @@ export interface OrderHistoryItem {
   symbol: string
   side: 'long' | 'short'
   type: string
+  margin_mode: 'isolated' | 'cross'
   size: string
   exec_price: string
   leverage: number

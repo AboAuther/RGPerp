@@ -57,6 +57,7 @@ var (
 var (
 	ErrWithdrawalPending   = New(http.StatusConflict, 50001, "withdrawal already pending")
 	ErrMinWithdrawalAmount = New(http.StatusBadRequest, 50002, "amount below minimum")
+	ErrWithdrawalRiskCheck = New(http.StatusBadRequest, 50003, "withdrawal rejected by risk check")
 )
 
 // System errors (90xxx)

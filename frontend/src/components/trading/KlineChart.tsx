@@ -52,13 +52,13 @@ export default memo(KlineChart)
 function mapTradingViewSymbol(symbol: string) {
   switch (symbol) {
     case 'BTC-PERP':
-      return 'BYBIT:BTCUSDT.P'
+      return 'BINANCE:BTCUSDT.P'
     case 'ETH-PERP':
-      return 'BYBIT:ETHUSDT.P'
+      return 'BINANCE:ETHUSDT.P'
     case 'SOL-PERP':
-      return 'BYBIT:SOLUSDT.P'
+      return 'BINANCE:SOLUSDT.P'
     default:
-      return 'BYBIT:BTCUSDT.P'
+      return 'BINANCE:BTCUSDT.P'
   }
 }
 

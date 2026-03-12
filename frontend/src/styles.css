@@ -47,6 +47,30 @@ body.light-theme {
   overflow: hidden;
 }
 
+.rg-positions-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rg-position-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.rg-position-actions-input {
+  width: 94px;
+}
+
+.rg-action-button {
+  padding-inline: 10px;
+}
+
 .rg-chart-shell {
   display: flex;
   flex-direction: column;
@@ -234,6 +258,10 @@ body.light-theme .rg-chart-legend-symbol {
 }
 
 @media (max-width: 992px) {
+  .rg-position-actions {
+    flex-wrap: wrap;
+  }
+
   .rg-chart-body {
     grid-template-columns: 1fr;
   }

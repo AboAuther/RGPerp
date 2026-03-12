@@ -51,20 +51,18 @@ func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutp
 		return nil, apperr.ErrMinWithdrawalAmount
 	}
 
-	var account model.Account
-	if err := s.db.Where("user_id = ?", input.UserID).First(&account).Error; err != nil {
+	riskState, err := buildRiskState(s.db, input.UserID)
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperr.ErrAccountNotFound
 		}
 		return nil, err
 	}
 
-	pending, err := pendingWithdrawalAmount(s.db, input.UserID)
-	if err != nil {
-		return nil, err
+	if riskState.RiskLevel == "danger" {
+		return nil, apperr.ErrWithdrawalRiskCheck
 	}
-	withdrawable := account.AvailableBalance.Sub(pending)
-	if withdrawable.LessThan(input.Amount) {
+	if riskState.WithdrawableBalance.LessThan(input.Amount) {
 		return nil, apperr.ErrInsufficientBalance
 	}
 

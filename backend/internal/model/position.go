@@ -7,6 +7,7 @@ type Position struct {
 	UserID           uint64          `gorm:"index;not null" json:"user_id"`
 	Symbol           string          `gorm:"type:varchar(20);index;not null" json:"symbol"`
 	Side             string          `gorm:"type:varchar(10);not null" json:"side"`
+	MarginMode       string          `gorm:"type:varchar(20);default:'isolated';not null" json:"margin_mode"`
 	Size             decimal.Decimal `gorm:"type:decimal(36,18);not null" json:"size"`
 	EntryPrice       decimal.Decimal `gorm:"type:decimal(36,18);not null" json:"entry_price"`
 	MarkPrice        decimal.Decimal `gorm:"type:decimal(36,18)" json:"mark_price"`

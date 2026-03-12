@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -53,10 +54,49 @@ func TestOrderService_ReduceOnlyClose(t *testing.T) {
 	}
 }
 
+func TestOrderService_CrossMarginAndMockHedge(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	result, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "cross-open",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "cross",
+		Size:          decimal.RequireFromString("0.002"),
+		Leverage:      10,
+	})
+	if err != nil {
+		t.Fatalf("cross open failed: %v", err)
+	}
+	if result.Position == nil || result.Position.MarginMode != "cross" {
+		t.Fatalf("expected cross position, got %#v", result.Position)
+	}
+
+	var hedgeTask model.HedgeTask
+	if err := db.Order("id desc").First(&hedgeTask).Error; err != nil {
+		t.Fatalf("load hedge task: %v", err)
+	}
+	if hedgeTask.Symbol != "BTC-PERP" || hedgeTask.Status != "pending" {
+		t.Fatalf("unexpected hedge task: %#v", hedgeTask)
+	}
+
+	var hedgeOrder model.HedgeOrder
+	if err := db.Where("hedge_task_id = ?", hedgeTask.ID).First(&hedgeOrder).Error; err != nil {
+		t.Fatalf("load hedge order: %v", err)
+	}
+	if hedgeOrder.Status != "mock_pending" {
+		t.Fatalf("unexpected hedge order status: %s", hedgeOrder.Status)
+	}
+}
+
 func mustNewOrderTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open("file:order_test?mode=memory&cache=shared"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:%s-%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

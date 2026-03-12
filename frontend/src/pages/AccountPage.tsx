@@ -569,11 +569,27 @@ export default function AccountPage() {
                   <Statistic title="可提现" value={formatAmount(accountQuery.data?.withdrawable_balance)} suffix="USDC" />
                 </Card>
               </Col>
+              <Col span={12}>
+                <Card size="small">
+                  <Statistic title="未实现盈亏" value={formatAmount(accountQuery.data?.unrealized_pnl)} suffix="USDC" />
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small">
+                  <Statistic title="风险率" value={formatAmount(accountQuery.data?.margin_ratio, 2)} suffix="%" />
+                </Card>
+              </Col>
             </Row>
 
             <Descriptions column={1} size="small">
               <Descriptions.Item label="资产">{accountQuery.data?.asset ?? 'USDC'}</Descriptions.Item>
               <Descriptions.Item label="待提现占用">{formatAmount(accountQuery.data?.pending_withdrawal)} USDC</Descriptions.Item>
+              <Descriptions.Item label="维持保证金">{formatAmount(accountQuery.data?.maintenance_margin)} USDC</Descriptions.Item>
+              <Descriptions.Item label="风险等级">
+                <Tag color={accountQuery.data?.risk_level === 'danger' ? 'red' : accountQuery.data?.risk_level === 'warning' ? 'gold' : 'green'}>
+                  {accountQuery.data?.risk_level ?? 'normal'}
+                </Tag>
+              </Descriptions.Item>
             </Descriptions>
 
             <div style={{ marginTop: 'auto' }}>

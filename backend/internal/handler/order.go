@@ -25,6 +25,7 @@ type createOrderRequest struct {
 	Symbol        string `json:"symbol" binding:"required"`
 	Side          string `json:"side" binding:"required"`
 	Type          string `json:"type" binding:"required"`
+	MarginMode    string `json:"margin_mode"`
 	Size          string `json:"size" binding:"required"`
 	Leverage      uint32 `json:"leverage" binding:"required"`
 	Margin        string `json:"margin"`
@@ -65,6 +66,7 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		Symbol:        req.Symbol,
 		Side:          req.Side,
 		Type:          req.Type,
+		MarginMode:    req.MarginMode,
 		Size:          size,
 		Leverage:      req.Leverage,
 		Margin:        margin,

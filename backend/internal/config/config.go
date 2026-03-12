@@ -15,6 +15,7 @@ type Config struct {
 	JWT         JWTConfig         `mapstructure:"jwt"`
 	Blockchain  BlockchainConfig  `mapstructure:"blockchain"`
 	Hyperliquid HyperliquidConfig `mapstructure:"hyperliquid"`
+	Binance     BinanceConfig     `mapstructure:"binance"`
 	Price       PriceConfig       `mapstructure:"price"`
 	Oracle      OracleConfig      `mapstructure:"oracle"`
 }
@@ -66,6 +67,10 @@ type HyperliquidConfig struct {
 	PrivateKey    string `mapstructure:"private_key"`
 }
 
+type BinanceConfig struct {
+	FuturesAPIURL string `mapstructure:"futures_api_url"`
+}
+
 type PriceConfig struct {
 	Source         string `mapstructure:"source"`
 	PollIntervalMS int    `mapstructure:"poll_interval_ms"`
@@ -114,6 +119,7 @@ func Load() (*Config, error) {
 	cfg.Hyperliquid.APIURL = v.GetString("HYPERLIQUID_API_URL")
 	cfg.Hyperliquid.WalletAddress = v.GetString("HYPERLIQUID_WALLET_ADDRESS")
 	cfg.Hyperliquid.PrivateKey = v.GetString("HYPERLIQUID_PRIVATE_KEY")
+	cfg.Binance.FuturesAPIURL = v.GetString("BINANCE_FUTURES_API_URL")
 	cfg.Price.Source = v.GetString("PRICE_SOURCE")
 	cfg.Price.PollIntervalMS = v.GetInt("PRICE_POLL_INTERVAL_MS")
 	cfg.Oracle.BTCUSDFeed = v.GetString("ORACLE_BTC_USD_FEED")
@@ -128,6 +134,9 @@ func Load() (*Config, error) {
 	if cfg.Price.PollIntervalMS <= 0 {
 		cfg.Price.PollIntervalMS = 2000
 	}
+	if cfg.Binance.FuturesAPIURL == "" {
+		cfg.Binance.FuturesAPIURL = "https://fapi.binance.com"
+	}
 
 	return cfg, nil
 }
@@ -141,6 +150,7 @@ func bindEnvMappings(v *viper.Viper) {
 		"JWT_SECRET", "JWT_EXPIRE_HOURS",
 		"RPC_URL", "CHAIN_ID", "VAULT_ADDRESS", "USDC_ADDRESS", "OPERATOR_PRIVATE_KEY",
 		"HYPERLIQUID_API_URL", "HYPERLIQUID_WALLET_ADDRESS", "HYPERLIQUID_PRIVATE_KEY",
+		"BINANCE_FUTURES_API_URL",
 		"PRICE_SOURCE", "PRICE_POLL_INTERVAL_MS",
 		"ORACLE_BTC_USD_FEED", "ORACLE_ETH_USD_FEED",
 	}

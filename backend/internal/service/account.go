@@ -23,7 +23,11 @@ type AccountOutput struct {
 	LockedBalance       decimal.Decimal `json:"locked_balance"`
 	PendingWithdrawal   decimal.Decimal `json:"pending_withdrawal"`
 	WithdrawableBalance decimal.Decimal `json:"withdrawable_balance"`
+	UnrealizedPnL       decimal.Decimal `json:"unrealized_pnl"`
 	Equity              decimal.Decimal `json:"equity"`
+	MaintenanceMargin   decimal.Decimal `json:"maintenance_margin"`
+	MarginRatio         decimal.Decimal `json:"margin_ratio"`
+	RiskLevel           string          `json:"risk_level"`
 }
 
 type DepositRecordOutput struct {
@@ -40,31 +44,25 @@ func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
 		return nil, err
 	}
 
-	var account model.Account
-	if err := s.db.Where("user_id = ?", userID).First(&account).Error; err != nil {
+	riskState, err := buildRiskState(s.db, userID)
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperr.ErrAccountNotFound
 		}
 		return nil, err
 	}
 
-	pending, err := pendingWithdrawalAmount(s.db, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	withdrawable := account.AvailableBalance.Sub(pending)
-	if withdrawable.IsNegative() {
-		withdrawable = decimal.Zero
-	}
-
 	return &AccountOutput{
 		Asset:               "USDC",
-		AvailableBalance:    account.AvailableBalance,
-		LockedBalance:       account.LockedBalance,
-		PendingWithdrawal:   pending,
-		WithdrawableBalance: withdrawable,
-		Equity:              account.AvailableBalance.Add(account.LockedBalance),
+		AvailableBalance:    riskState.AvailableBalance,
+		LockedBalance:       riskState.LockedBalance,
+		PendingWithdrawal:   riskState.PendingWithdrawal,
+		WithdrawableBalance: riskState.WithdrawableBalance,
+		UnrealizedPnL:       riskState.UnrealizedPnL,
+		Equity:              riskState.Equity,
+		MaintenanceMargin:   riskState.TotalMaintenance,
+		MarginRatio:         riskState.MarginRatio,
+		RiskLevel:           riskState.RiskLevel,
 	}, nil
 }
 
