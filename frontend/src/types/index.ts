@@ -20,10 +20,12 @@ export interface User {
 }
 
 export interface Account {
-  id: number
-  user_id: number
+  asset: string
   available_balance: string
   locked_balance: string
+  pending_withdrawal: string
+  withdrawable_balance: string
+  equity: string
 }
 
 export interface Position {
@@ -93,4 +95,39 @@ export interface PriceData {
   mark_price: string
   index_price: string
   timestamp: number
+}
+
+export interface AuthChallenge {
+  nonce: string
+  message: string
+  expires_at: string
+}
+
+export interface AuthLogin {
+  token: string
+  expires_at: string
+  user: {
+    id: number
+    wallet_address: string
+    status: string
+  }
+}
+
+export interface DepositInfo {
+  chain_id: number
+  vault_address: string
+  usdc_address: string
+  asset: string
+  decimals: number
+}
+
+export interface WithdrawalRequest {
+  request_id: string
+  amount: string
+  status: string
+  nonce: number
+  signature: string
+  deadline: string
+  tx_hash?: string
+  created_at: string
 }

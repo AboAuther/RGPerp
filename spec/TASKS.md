@@ -17,7 +17,7 @@
   - 完成前端 `React + Vite + TypeScript + Ant Design` 基础工程
   - 完成 Solidity / Foundry 工程初始化、本地部署脚本与链下服务骨架
   - 完成标准：本地可启动基础依赖，前后端、合约工程与三类后台进程均可独立运行
-- [ ] 里程碑 2：账户体系、Vault 与链上记账闭环
+- [x] 里程碑 2：账户体系、Vault 与链上记账闭环
   - 实现钱包登录、nonce 签名验证、JWT 会话机制
   - 完成 `MockUSDC` 与 `Vault` 合约，支持 `deposit` / `withdraw`
   - 实现后端签名授权提现模型

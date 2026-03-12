@@ -43,6 +43,10 @@ type WithdrawalOutput struct {
 }
 
 func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutput, error) {
+	if err := expireDueWithdrawals(s.db, input.UserID); err != nil {
+		return nil, err
+	}
+
 	if input.Amount.LessThanOrEqual(decimal.Zero) {
 		return nil, apperr.ErrMinWithdrawalAmount
 	}
@@ -138,6 +142,10 @@ func (s *WithdrawalService) Create(input CreateWithdrawalInput) (*WithdrawalOutp
 }
 
 func (s *WithdrawalService) List(userID uint64) ([]model.WithdrawalRequest, error) {
+	if err := expireDueWithdrawals(s.db, userID); err != nil {
+		return nil, err
+	}
+
 	var requests []model.WithdrawalRequest
 	if err := s.db.Where("user_id = ?", userID).Order("created_at desc").Find(&requests).Error; err != nil {
 		return nil, err

@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/AboAuther/RGPerp/backend/internal/model"
 	apperr "github.com/AboAuther/RGPerp/backend/internal/pkg/errors"
 	"github.com/shopspring/decimal"
@@ -25,6 +27,10 @@ type AccountOutput struct {
 }
 
 func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
+	if err := expireDueWithdrawals(s.db, userID); err != nil {
+		return nil, err
+	}
+
 	var account model.Account
 	if err := s.db.Where("user_id = ?", userID).First(&account).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -64,4 +70,10 @@ func pendingWithdrawalAmount(db *gorm.DB, userID uint64) (decimal.Decimal, error
 		total = total.Add(item.Amount)
 	}
 	return total, nil
+}
+
+func expireDueWithdrawals(db *gorm.DB, userID uint64) error {
+	return db.Model(&model.WithdrawalRequest{}).
+		Where("user_id = ? AND status = ? AND deadline < ?", userID, "signed", time.Now().UTC()).
+		Update("status", "expired").Error
 }

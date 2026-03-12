@@ -25,6 +25,7 @@ Thumbs.db
 # Foundry
 contracts/out/
 contracts/cache/
+contracts/broadcast/
 
 # Logs
 *.log
@@ -33,3 +34,6 @@ contracts/cache/
 mysql_data/
 redis_data/
 rabbitmq_data/
+
+# Local-only test assets
+.local/

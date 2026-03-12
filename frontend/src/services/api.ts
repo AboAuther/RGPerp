@@ -33,8 +33,12 @@ export async function get<T>(url: string, params?: Record<string, unknown>): Pro
   return res.data
 }
 
-export async function post<T>(url: string, data?: unknown): Promise<ApiResponse<T>> {
-  const res = await api.post<ApiResponse<T>>(url, data)
+export async function post<T>(
+  url: string,
+  data?: unknown,
+  headers?: Record<string, string>,
+): Promise<ApiResponse<T>> {
+  const res = await api.post<ApiResponse<T>>(url, data, { headers })
   return res.data
 }
 
