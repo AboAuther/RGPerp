@@ -64,6 +64,15 @@ export interface Order {
   created_at: string
 }
 
+export interface OrderExecution {
+  order: Order
+  position?: Position
+  account: {
+    available_balance: string
+    locked_balance: string
+  }
+}
+
 export interface Trade {
   id: number
   order_id: number

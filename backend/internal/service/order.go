@@ -303,9 +303,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 
 			order.RealizedPnL = realizedPnL
 			if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).
-				Updates(map[string]interface{}{
-					"realized_pnl": order.RealizedPnL,
-				}).Error; err != nil {
+				Update("RealizedPnL", order.RealizedPnL).Error; err != nil {
 				return err
 			}
 

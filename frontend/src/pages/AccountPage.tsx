@@ -6,10 +6,12 @@ import {
   Card,
   Col,
   Descriptions,
+  Divider,
   Form,
   Input,
   Row,
   Space,
+  Statistic,
   Table,
   Tag,
   Typography,
@@ -60,6 +62,13 @@ function formatDeadline(value: string, mode: DeadlineMode): string {
 
 function parseUsdcAmountToUnits(value: string): bigint {
   return parseUnits(value, 6)
+}
+
+function shortenMiddle(value: string, left = 10, right = 8): string {
+  if (value.length <= left + right + 3) {
+    return value
+  }
+  return `${value.slice(0, left)}...${value.slice(-right)}`
 }
 
 async function waitForTxReceipt(hash: string): Promise<void> {
@@ -467,25 +476,70 @@ export default function AccountPage() {
           </Space>
         </Card>
       ) : null}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={8}>
-          <Card title="账户余额" className="rg-glass-card">
+      <Row gutter={[16, 16]} align="stretch">
+        <Col xs={24} md={8} style={{ display: 'flex' }}>
+          <Card
+            title="账户余额"
+            className="rg-glass-card"
+            style={{ width: '100%', height: '100%' }}
+            styles={{ body: { display: 'flex', flexDirection: 'column', gap: 18 } }}
+          >
+            <div
+              style={{
+                borderRadius: 16,
+                padding: 18,
+                background: isDark
+                  ? 'linear-gradient(135deg, rgba(46,201,176,0.16) 0%, rgba(21,37,48,0.9) 100%)'
+                  : 'linear-gradient(135deg, rgba(22,119,255,0.10) 0%, rgba(255,255,255,0.92) 100%)',
+                border: `1px solid ${isDark ? '#1d3d4c' : '#dbeafe'}`,
+              }}
+            >
+              <Typography.Text type="secondary">钱包地址</Typography.Text>
+              <Typography.Paragraph className="rg-mono" style={{ fontSize: 18, marginBottom: 0, marginTop: 6 }}>
+                {walletAddress}
+              </Typography.Paragraph>
+            </div>
+
+            <Row gutter={[12, 12]}>
+              <Col span={12}>
+                <Card size="small">
+                  <Statistic title="可用余额" value={accountQuery.data?.available_balance ?? '--'} suffix="USDC" />
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small">
+                  <Statistic title="账户权益" value={accountQuery.data?.equity ?? '--'} suffix="USDC" />
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small">
+                  <Statistic title="锁定余额" value={accountQuery.data?.locked_balance ?? '--'} suffix="USDC" />
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small">
+                  <Statistic title="可提现" value={accountQuery.data?.withdrawable_balance ?? '--'} suffix="USDC" />
+                </Card>
+              </Col>
+            </Row>
+
             <Descriptions column={1} size="small">
-              <Descriptions.Item label="钱包地址">{walletAddress}</Descriptions.Item>
               <Descriptions.Item label="资产">{accountQuery.data?.asset ?? 'USDC'}</Descriptions.Item>
-              <Descriptions.Item label="可用余额">{accountQuery.data?.available_balance ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="锁定余额">{accountQuery.data?.locked_balance ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="待提现占用">{accountQuery.data?.pending_withdrawal ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="可提现余额">{accountQuery.data?.withdrawable_balance ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="账户权益">{accountQuery.data?.equity ?? '-'}</Descriptions.Item>
             </Descriptions>
-            <Space style={{ marginTop: 16 }}>
+
+            <div style={{ marginTop: 'auto' }}>
               <Button onClick={() => logout()}>退出登录</Button>
-            </Space>
+            </div>
           </Card>
         </Col>
-        <Col xs={24} md={8}>
-          <Card title="充值" className="rg-glass-card">
+        <Col xs={24} md={8} style={{ display: 'flex' }}>
+          <Card
+            title="充值"
+            className="rg-glass-card"
+            style={{ width: '100%', height: '100%' }}
+            styles={{ body: { display: 'flex', flexDirection: 'column', height: '100%' } }}
+          >
             <Descriptions column={1} size="small">
               <Descriptions.Item label="链 ID">{depositInfoQuery.data?.chain_id ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="Vault">{depositInfoQuery.data?.vault_address ?? '-'}</Descriptions.Item>
@@ -509,15 +563,20 @@ export default function AccountPage() {
               </Button>
             </Form>
             <Alert
-              style={{ marginTop: 16 }}
+              style={{ marginTop: 'auto' }}
               type="info"
               showIcon
               message="充值上链后，indexer 入账通常需要 3-6 秒，请稍后刷新余额。"
             />
           </Card>
         </Col>
-        <Col xs={24} md={8}>
-          <Card title="提现" className="rg-glass-card">
+        <Col xs={24} md={8} style={{ display: 'flex' }}>
+          <Card
+            title="提现"
+            className="rg-glass-card"
+            style={{ width: '100%', height: '100%' }}
+            styles={{ body: { display: 'flex', flexDirection: 'column', gap: 16, height: '100%' } }}
+          >
             <Form
               form={withdrawForm}
               layout="vertical"
@@ -536,42 +595,54 @@ export default function AccountPage() {
             </Form>
 
             {withdrawSignature ? (
-              <Alert
-                style={{ marginTop: 16 }}
-                type="success"
-                showIcon
-                message="提现授权已生成"
-                description={
-                  <Space direction="vertical" size={4}>
-                    <Typography.Text>Request ID: {withdrawSignature.request_id}</Typography.Text>
-                    <Typography.Text>Nonce: {withdrawSignature.nonce}</Typography.Text>
-                    <Space>
-                      <Typography.Text>
-                        Deadline: {formatDeadline(withdrawSignature.deadline, deadlineMode)}
-                      </Typography.Text>
-                      <Button size="small" icon={<SwapOutlined />} onClick={() => setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))} />
-                    </Space>
-                    <Typography.Text type="secondary">
-                      UTC: {new Date(withdrawSignature.deadline).toISOString()}
-                    </Typography.Text>
-                    <Typography.Text type="secondary">
-                      Unix: {deadlineUnix(withdrawSignature.deadline)}
-                    </Typography.Text>
-                    <Typography.Text copyable={{ text: withdrawSignature.signature }}>
-                      Signature: {withdrawSignature.signature}
-                    </Typography.Text>
-                    <Button
-                      type="primary"
-                      ghost={isDark}
-                      loading={executeWithdrawalMutation.isPending}
-                      onClick={() => executeWithdrawalMutation.mutate(withdrawSignature)}
-                    >
-                      钱包确认提现
-                    </Button>
+              <div
+                style={{
+                  borderRadius: 14,
+                  padding: 16,
+                  background: isDark ? 'rgba(15, 31, 40, 0.9)' : '#f8fbff',
+                  border: `1px solid ${isDark ? '#1b3b49' : '#dbeafe'}`,
+                }}
+              >
+                <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                  <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
+                    <Typography.Text strong>提现授权已生成</Typography.Text>
+                    <Button size="small" icon={<SwapOutlined />} onClick={() => setDeadlineMode((mode) => (mode === 'local' ? 'unix' : 'local'))} />
                   </Space>
-                }
-              />
+                  <Descriptions size="small" column={1}>
+                    <Descriptions.Item label="Request ID">{withdrawSignature.request_id}</Descriptions.Item>
+                    <Descriptions.Item label="Nonce">{withdrawSignature.nonce}</Descriptions.Item>
+                    <Descriptions.Item label="Deadline">
+                      {formatDeadline(withdrawSignature.deadline, deadlineMode)}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Signature">
+                      <Typography.Text
+                        className="rg-mono"
+                        copyable={{ text: withdrawSignature.signature }}
+                      >
+                        {shortenMiddle(withdrawSignature.signature, 14, 10)}
+                      </Typography.Text>
+                    </Descriptions.Item>
+                  </Descriptions>
+                  <Button
+                    type="primary"
+                    ghost={isDark}
+                    loading={executeWithdrawalMutation.isPending}
+                    onClick={() => executeWithdrawalMutation.mutate(withdrawSignature)}
+                  >
+                    钱包确认提现
+                  </Button>
+                </Space>
+              </div>
             ) : null}
+            <Divider style={{ margin: 0 }} />
+            <Button
+              ghost
+              disabled={!withdrawSignature}
+              loading={executeWithdrawalMutation.isPending}
+              onClick={() => withdrawSignature && executeWithdrawalMutation.mutate(withdrawSignature)}
+            >
+              便捷提现
+            </Button>
           </Card>
         </Col>
       </Row>
