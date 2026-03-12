@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -84,6 +85,22 @@ func (h *OrderHandler) ListPositions(c *gin.Context) {
 	}
 
 	items, err := h.orderService.ListOpenPositions(userIDValue.(uint64))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, items)
+}
+
+func (h *OrderHandler) ListOrders(c *gin.Context) {
+	userIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.FailWithMsg(c, http.StatusUnauthorized, 10004, "unauthorized")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	items, err := h.orderService.ListOrders(userIDValue.(uint64), limit)
 	if err != nil {
 		response.Fail(c, err)
 		return

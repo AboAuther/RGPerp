@@ -15,15 +15,30 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
   Typography,
   message,
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, post } from '../services/api'
-import type { Account, AuthChallenge, AuthLogin, KlineItem, MarketTicker, OrderExecution, Position, SymbolInfo } from '../types'
+import type { Account, AuthChallenge, AuthLogin, KlineItem, MarketTicker, OrderExecution, OrderHistoryItem, Position, SymbolInfo } from '../types'
 import KlineChart from '../components/trading/KlineChart'
 import { useThemeStore } from '../stores/themeStore'
 import { useAuthStore } from '../stores/authStore'
+
+function formatAmount(value?: string | number | null, precision = 6): string {
+  if (value === null || value === undefined || value === '') {
+    return '--'
+  }
+  const num = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(num)) {
+    return String(value)
+  }
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: precision,
+  })
+}
 
 export default function TradePage() {
   const [symbol, setSymbol] = useState<string>('BTC-PERP')
@@ -86,6 +101,13 @@ export default function TradePage() {
     refetchInterval: 4000,
   })
 
+  const ordersQuery = useQuery({
+    queryKey: ['orders'],
+    queryFn: async () => (await get<OrderHistoryItem[]>('/orders', { limit: 20 })).data ?? [],
+    enabled: authenticated,
+    refetchInterval: 4000,
+  })
+
   const loginMutation = useMutation({
     mutationFn: async () => {
       if (!window.ethereum) {
@@ -127,6 +149,7 @@ export default function TradePage() {
       setAuth(result.token, result.user.wallet_address)
       void queryClient.invalidateQueries({ queryKey: ['trade-account'] })
       void queryClient.invalidateQueries({ queryKey: ['positions'] })
+      void queryClient.invalidateQueries({ queryKey: ['orders'] })
       void messageApi.success('登录成功')
     },
     onError: (error) => {
@@ -157,6 +180,7 @@ export default function TradePage() {
       orderForm.resetFields(['size', 'reduce_only'])
       void queryClient.invalidateQueries({ queryKey: ['trade-account'] })
       void queryClient.invalidateQueries({ queryKey: ['positions'] })
+      void queryClient.invalidateQueries({ queryKey: ['orders'] })
       void messageApi.success('市价单已成交')
     },
     onError: (error) => {
@@ -177,12 +201,51 @@ export default function TradePage() {
   const positionColumns = useMemo(
     () => [
       { title: '方向', dataIndex: 'side', key: 'side' },
-      { title: '数量', dataIndex: 'size', key: 'size' },
-      { title: '开仓价', dataIndex: 'entry_price', key: 'entry_price' },
-      { title: '标记价', dataIndex: 'mark_price', key: 'mark_price' },
-      { title: '保证金', dataIndex: 'margin', key: 'margin' },
-      { title: '未实现盈亏', dataIndex: 'unrealized_pnl', key: 'unrealized_pnl' },
-      { title: '清算价', dataIndex: 'liquidation_price', key: 'liquidation_price' },
+      { title: '数量', dataIndex: 'size', key: 'size', render: (value: string) => formatAmount(value, 4) },
+      { title: '开仓价', dataIndex: 'entry_price', key: 'entry_price', render: (value: string) => formatAmount(value, 2) },
+      { title: '标记价', dataIndex: 'mark_price', key: 'mark_price', render: (value: string) => formatAmount(value, 2) },
+      { title: '保证金', dataIndex: 'margin', key: 'margin', render: (value: string) => `${formatAmount(value)} USDC` },
+      {
+        title: '未实现盈亏',
+        dataIndex: 'unrealized_pnl',
+        key: 'unrealized_pnl',
+        render: (value: string) => (
+          <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>{formatAmount(value)}</Typography.Text>
+        ),
+      },
+      { title: '清算价', dataIndex: 'liquidation_price', key: 'liquidation_price', render: (value: string) => formatAmount(value, 2) },
+    ],
+    [],
+  )
+
+  const orderColumns = useMemo(
+    () => [
+      { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (value: string) => new Date(value).toLocaleString() },
+      { title: '交易对', dataIndex: 'symbol', key: 'symbol' },
+      {
+        title: '方向',
+        dataIndex: 'side',
+        key: 'side',
+        render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag>,
+      },
+      { title: '数量', dataIndex: 'size', key: 'size', render: (value: string) => formatAmount(value, 4) },
+      { title: '成交价', dataIndex: 'exec_price', key: 'exec_price', render: (value: string) => formatAmount(value, 2) },
+      { title: '杠杆', dataIndex: 'leverage', key: 'leverage', render: (value: number) => `${value}x` },
+      { title: '手续费', dataIndex: 'fee', key: 'fee', render: (value: string) => formatAmount(value) },
+      {
+        title: '已实现盈亏',
+        dataIndex: 'realized_pnl',
+        key: 'realized_pnl',
+        render: (value: string) => (
+          <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>{formatAmount(value)}</Typography.Text>
+        ),
+      },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        render: (value: string) => <Tag color={value === 'filled' ? 'cyan' : 'default'}>{value}</Tag>,
+      },
     ],
     [],
   )
@@ -200,13 +263,13 @@ export default function TradePage() {
             <Space direction="vertical" size={2}>
               <Space size={10}>
                 <Typography.Title level={3} style={{ margin: 0 }}>
-                  BTC-USDC
+                  {currentSymbol ? `${currentSymbol.base_asset}-${currentSymbol.quote_asset}` : 'BTC-USDC'}
                 </Typography.Title>
                 <Button size="small" type="primary" ghost>
                   40x
                 </Button>
               </Space>
-              <Typography.Text type="secondary">Chart feed aligned to BTC/USDC market</Typography.Text>
+              <Typography.Text type="secondary">Perpetuals terminal</Typography.Text>
             </Space>
           </Col>
           <Col>
@@ -214,13 +277,13 @@ export default function TradePage() {
               <div>
                 <Typography.Text type="secondary">Mark</Typography.Text>
                 <Typography.Title level={4} style={{ margin: 0, color: '#2ec9b0' }}>
-                  {tickerQuery.data?.mark_price ?? '--'}
+                  {formatAmount(tickerQuery.data?.mark_price, 2)}
                 </Typography.Title>
               </div>
               <div>
                 <Typography.Text type="secondary">Oracle</Typography.Text>
                 <Typography.Title level={4} style={{ margin: 0 }}>
-                  {tickerQuery.data?.index_price ?? '--'}
+                  {formatAmount(tickerQuery.data?.index_price, 2)}
                 </Typography.Title>
               </div>
               <div>
@@ -255,34 +318,15 @@ export default function TradePage() {
           />
         </Col>
       </Row>
-
-      <Card style={{ marginBottom: 16 }}>
-        {tickerQuery.isLoading ? (
-          <Skeleton active paragraph={{ rows: 1 }} />
-        ) : tickerQuery.data ? (
-          <Descriptions size="small" column={{ xs: 1, sm: 2, md: 4 }}>
-            <Descriptions.Item label="标记价格">{tickerQuery.data.mark_price}</Descriptions.Item>
-            <Descriptions.Item label="指数价格">{tickerQuery.data.index_price}</Descriptions.Item>
-            <Descriptions.Item label="最优买/卖">
-              {tickerQuery.data.best_bid} / {tickerQuery.data.best_ask}
-            </Descriptions.Item>
-            <Descriptions.Item label="更新时间">
-              {new Date(tickerQuery.data.timestamp * 1000).toLocaleString()}
-            </Descriptions.Item>
-          </Descriptions>
-        ) : (
-          <Empty description="暂无行情数据" />
-        )}
-      </Card>
-
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
           <Card title="K 线图表" style={{ minHeight: 400 }} className="rg-glass-card">
             <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
               <Col>
                 <Space size={10}>
-                  <Typography.Text strong>BTCUSD</Typography.Text>
-                  <Typography.Text type="secondary">Hyperliquid style</Typography.Text>
+                  <Typography.Text strong>{currentSymbol?.name ?? 'BTC-PERP'}</Typography.Text>
+                  <Tag color="cyan">EMA(9)</Tag>
+                  <Tag color="blue">Volume</Tag>
                 </Space>
               </Col>
               <Col>
@@ -300,16 +344,13 @@ export default function TradePage() {
             ) : (
               <Empty description="暂无K线数据" />
             )}
-            <Descriptions
-              size="small"
-              column={{ xs: 1, sm: 2, md: 4 }}
-              style={{ marginTop: 16 }}
-            >
-              <Descriptions.Item label="交易标的">{currentSymbol?.name ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="图表来源">BTC / USDC</Descriptions.Item>
-              <Descriptions.Item label="最优买">{tickerQuery.data?.best_bid ?? '--'}</Descriptions.Item>
-              <Descriptions.Item label="最优卖">{tickerQuery.data?.best_ask ?? '--'}</Descriptions.Item>
-            </Descriptions>
+            <Space size={16} style={{ marginTop: 16 }} wrap>
+              <Typography.Text type="secondary">Best Bid {formatAmount(tickerQuery.data?.best_bid, 2)}</Typography.Text>
+              <Typography.Text type="secondary">Best Ask {formatAmount(tickerQuery.data?.best_ask, 2)}</Typography.Text>
+              <Typography.Text type="secondary">
+                Updated {tickerQuery.data ? new Date(tickerQuery.data.timestamp * 1000).toLocaleTimeString() : '--'}
+              </Typography.Text>
+            </Space>
           </Card>
         </Col>
         <Col xs={24} lg={8}>
@@ -328,8 +369,8 @@ export default function TradePage() {
             ) : (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <Descriptions size="small" column={1}>
-                  <Descriptions.Item label="可用余额">{accountQuery.data?.available_balance ?? '--'} USDC</Descriptions.Item>
-                  <Descriptions.Item label="锁定保证金">{accountQuery.data?.locked_balance ?? '--'} USDC</Descriptions.Item>
+                  <Descriptions.Item label="可用余额">{formatAmount(accountQuery.data?.available_balance)} USDC</Descriptions.Item>
+                  <Descriptions.Item label="锁定保证金">{formatAmount(accountQuery.data?.locked_balance)} USDC</Descriptions.Item>
                 </Descriptions>
                 <Form
                   form={orderForm}
@@ -365,9 +406,9 @@ export default function TradePage() {
                 {latestExecution ? (
                   <Card size="small">
                     <Descriptions size="small" column={1}>
-                      <Descriptions.Item label="成交价">{latestExecution.order.exec_price}</Descriptions.Item>
-                      <Descriptions.Item label="手续费">{latestExecution.order.fee}</Descriptions.Item>
-                      <Descriptions.Item label="可用余额">{latestExecution.account.available_balance}</Descriptions.Item>
+                      <Descriptions.Item label="成交价">{formatAmount(latestExecution.order.exec_price, 2)}</Descriptions.Item>
+                      <Descriptions.Item label="手续费">{formatAmount(latestExecution.order.fee)}</Descriptions.Item>
+                      <Descriptions.Item label="可用余额">{formatAmount(latestExecution.account.available_balance)}</Descriptions.Item>
                     </Descriptions>
                   </Card>
                 ) : null}
@@ -388,6 +429,23 @@ export default function TradePage() {
                 pagination={false}
                 locale={{ emptyText: '当前无持仓' }}
                 scroll={{ x: 960 }}
+              />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24}>
+          <Card title="最近订单" className="rg-glass-card">
+            {!authenticated ? (
+              <Typography.Text type="secondary">登录后可查看最近订单与成交结果。</Typography.Text>
+            ) : (
+              <Table
+                rowKey="id"
+                loading={ordersQuery.isLoading}
+                dataSource={ordersQuery.data ?? []}
+                columns={orderColumns}
+                pagination={false}
+                locale={{ emptyText: '暂无订单记录' }}
+                scroll={{ x: 1080 }}
               />
             )}
           </Card>

@@ -64,6 +64,23 @@ export interface Order {
   created_at: string
 }
 
+export interface OrderHistoryItem {
+  id: number
+  client_order_id: string
+  symbol: string
+  side: 'long' | 'short'
+  type: string
+  size: string
+  exec_price: string
+  leverage: number
+  margin: string
+  reduce_only: boolean
+  status: string
+  fee: string
+  realized_pnl: string
+  created_at: string
+}
+
 export interface OrderExecution {
   order: Order
   position?: Position

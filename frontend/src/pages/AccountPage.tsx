@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { SwapOutlined } from '@ant-design/icons'
 import {
   Alert,
@@ -64,6 +64,20 @@ function parseUsdcAmountToUnits(value: string): bigint {
   return parseUnits(value, 6)
 }
 
+function formatAmount(value?: string | number | null, precision = 6): string {
+  if (value === null || value === undefined || value === '') {
+    return '--'
+  }
+  const num = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(num)) {
+    return String(value)
+  }
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: precision,
+  })
+}
+
 function shortenMiddle(value: string, left = 10, right = 8): string {
   if (value.length <= left + right + 3) {
     return value
@@ -81,8 +95,11 @@ async function waitForTxReceipt(hash: string): Promise<void> {
     const receipt = await window.ethereum.request({
       method: 'eth_getTransactionReceipt',
       params: [hash],
-    })
+    }) as { status?: string } | null
     if (receipt) {
+      if (receipt.status === '0x0') {
+        throw new Error('transaction reverted on chain')
+      }
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -98,10 +115,20 @@ export default function AccountPage() {
   const [messageApi, contextHolder] = message.useMessage()
   const [withdrawSignature, setWithdrawSignature] = useState<WithdrawalRequest | null>(null)
   const [deadlineMode, setDeadlineMode] = useState<DeadlineMode>('local')
+  const [depositHint, setDepositHint] = useState<string | null>(null)
   const { mode } = useThemeStore()
   const isDark = mode === 'dark'
+  const depositHintTimerRef = useRef<number | null>(null)
 
   const authenticated = isAuthenticated()
+
+  useEffect(() => {
+    return () => {
+      if (depositHintTimerRef.current) {
+        window.clearTimeout(depositHintTimerRef.current)
+      }
+    }
+  }, [])
 
   const accountQuery = useQuery({
     queryKey: ['account', token],
@@ -294,12 +321,19 @@ export default function AccountPage() {
     onSuccess: (result) => {
       depositForm.resetFields()
       void messageApi.success(`充值交易已上链: ${result.depositTxHash}`)
+      setDepositHint('充值已上链，indexer 正在同步，余额通常会在 3 秒内刷新。')
+      if (depositHintTimerRef.current) {
+        window.clearTimeout(depositHintTimerRef.current)
+      }
+      depositHintTimerRef.current = window.setTimeout(() => {
+        setDepositHint(null)
+      }, 3000)
       queryClient.invalidateQueries({ queryKey: ['account'] })
       queryClient.invalidateQueries({ queryKey: ['deposits'] })
-      setTimeout(() => {
+      window.setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: ['account'] })
         void queryClient.invalidateQueries({ queryKey: ['deposits'] })
-      }, 6000)
+      }, 3000)
     },
     onError: (error) => {
       void messageApi.error(error instanceof Error ? error.message : '充值失败')
@@ -372,12 +406,13 @@ export default function AccountPage() {
     },
     onSuccess: (txHash) => {
       void messageApi.success(`提现交易已上链: ${txHash}`)
+      setWithdrawSignature(null)
       queryClient.invalidateQueries({ queryKey: ['account'] })
       queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
-      setTimeout(() => {
+      window.setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: ['account'] })
         void queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
-      }, 6000)
+      }, 3000)
     },
     onError: (error) => {
       void messageApi.error(error instanceof Error ? error.message : '提现执行失败')
@@ -387,7 +422,7 @@ export default function AccountPage() {
   const withdrawalColumns = useMemo(
     () => [
       { title: '请求 ID', dataIndex: 'request_id', key: 'request_id' },
-      { title: '金额', dataIndex: 'amount', key: 'amount' },
+      { title: '金额', dataIndex: 'amount', key: 'amount', render: (value: string) => `${formatAmount(value)} USDC` },
       {
         title: '状态',
         dataIndex: 'status',
@@ -442,7 +477,7 @@ export default function AccountPage() {
         key: 'created_at',
         render: (value: string) => new Date(value).toLocaleString(),
       },
-      { title: '金额', dataIndex: 'amount', key: 'amount' },
+      { title: '金额', dataIndex: 'amount', key: 'amount', render: (value: string) => `${formatAmount(value)} USDC` },
       { title: '区块', dataIndex: 'block_number', key: 'block_number' },
       {
         title: '状态',
@@ -503,29 +538,29 @@ export default function AccountPage() {
             <Row gutter={[12, 12]}>
               <Col span={12}>
                 <Card size="small">
-                  <Statistic title="可用余额" value={accountQuery.data?.available_balance ?? '--'} suffix="USDC" />
+                  <Statistic title="可用余额" value={formatAmount(accountQuery.data?.available_balance)} suffix="USDC" />
                 </Card>
               </Col>
               <Col span={12}>
                 <Card size="small">
-                  <Statistic title="账户权益" value={accountQuery.data?.equity ?? '--'} suffix="USDC" />
+                  <Statistic title="账户权益" value={formatAmount(accountQuery.data?.equity)} suffix="USDC" />
                 </Card>
               </Col>
               <Col span={12}>
                 <Card size="small">
-                  <Statistic title="锁定余额" value={accountQuery.data?.locked_balance ?? '--'} suffix="USDC" />
+                  <Statistic title="锁定余额" value={formatAmount(accountQuery.data?.locked_balance)} suffix="USDC" />
                 </Card>
               </Col>
               <Col span={12}>
                 <Card size="small">
-                  <Statistic title="可提现" value={accountQuery.data?.withdrawable_balance ?? '--'} suffix="USDC" />
+                  <Statistic title="可提现" value={formatAmount(accountQuery.data?.withdrawable_balance)} suffix="USDC" />
                 </Card>
               </Col>
             </Row>
 
             <Descriptions column={1} size="small">
               <Descriptions.Item label="资产">{accountQuery.data?.asset ?? 'USDC'}</Descriptions.Item>
-              <Descriptions.Item label="待提现占用">{accountQuery.data?.pending_withdrawal ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="待提现占用">{formatAmount(accountQuery.data?.pending_withdrawal)} USDC</Descriptions.Item>
             </Descriptions>
 
             <div style={{ marginTop: 'auto' }}>
@@ -562,12 +597,11 @@ export default function AccountPage() {
                 MetaMask 充值 (approve + deposit)
               </Button>
             </Form>
-            <Alert
-              style={{ marginTop: 'auto' }}
-              type="info"
-              showIcon
-              message="充值上链后，indexer 入账通常需要 3-6 秒，请稍后刷新余额。"
-            />
+            {depositHint ? (
+              <Alert style={{ marginTop: 'auto' }} type="info" showIcon message={depositHint} />
+            ) : (
+              <div style={{ marginTop: 'auto', minHeight: 52 }} />
+            )}
           </Card>
         </Col>
         <Col xs={24} md={8} style={{ display: 'flex' }}>
@@ -610,6 +644,7 @@ export default function AccountPage() {
                   </Space>
                   <Descriptions size="small" column={1}>
                     <Descriptions.Item label="Request ID">{withdrawSignature.request_id}</Descriptions.Item>
+                    <Descriptions.Item label="Amount">{formatAmount(withdrawSignature.amount)} USDC</Descriptions.Item>
                     <Descriptions.Item label="Nonce">{withdrawSignature.nonce}</Descriptions.Item>
                     <Descriptions.Item label="Deadline">
                       {formatDeadline(withdrawSignature.deadline, deadlineMode)}
@@ -635,14 +670,9 @@ export default function AccountPage() {
               </div>
             ) : null}
             <Divider style={{ margin: 0 }} />
-            <Button
-              ghost
-              disabled={!withdrawSignature}
-              loading={executeWithdrawalMutation.isPending}
-              onClick={() => withdrawSignature && executeWithdrawalMutation.mutate(withdrawSignature)}
-            >
-              便捷提现
-            </Button>
+            <Typography.Text type="secondary" style={{ marginTop: 'auto' }}>
+              先生成授权，再通过钱包确认发起链上提现。
+            </Typography.Text>
           </Card>
         </Col>
       </Row>

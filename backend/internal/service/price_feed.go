@@ -77,9 +77,10 @@ func (f *PriceFeeder) writeMockTicks(now time.Time, symbols []model.Symbol, last
 		if base.IsZero() {
 			base = defaultMockPrice(sym.Name)
 		}
-		// Random walk drift in [-0.2%, +0.2%], enough for local integration.
-		drift := (rand.Float64() - 0.5) * 0.004
-		next := base.Mul(decimal.NewFromFloat(1 + drift))
+		// Random walk drift in [-0.2%, +0.2%] with bounded decimal precision.
+		driftBps := rand.Intn(41) - 20
+		multiplier := decimal.NewFromInt(10000 + int64(driftBps)).Div(decimal.NewFromInt(10000))
+		next := base.Mul(multiplier).Round(6)
 		if next.LessThan(decimal.NewFromInt(1)) {
 			next = decimal.NewFromInt(1)
 		}

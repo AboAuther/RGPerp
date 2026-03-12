@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -55,6 +56,23 @@ type PositionListItem struct {
 	UnrealizedPnL    decimal.Decimal `json:"unrealized_pnl"`
 	RealizedPnL      decimal.Decimal `json:"realized_pnl"`
 	Status           string          `json:"status"`
+}
+
+type OrderListItem struct {
+	ID            uint64          `json:"id"`
+	ClientOrderID string          `json:"client_order_id"`
+	Symbol        string          `json:"symbol"`
+	Side          string          `json:"side"`
+	Type          string          `json:"type"`
+	Size          decimal.Decimal `json:"size"`
+	ExecPrice     decimal.Decimal `json:"exec_price"`
+	Leverage      uint32          `json:"leverage"`
+	Margin        decimal.Decimal `json:"margin"`
+	ReduceOnly    bool            `json:"reduce_only"`
+	Status        string          `json:"status"`
+	Fee           decimal.Decimal `json:"fee"`
+	RealizedPnL   decimal.Decimal `json:"realized_pnl"`
+	CreatedAt     string          `json:"created_at"`
 }
 
 func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, error) {
@@ -412,6 +430,41 @@ func (s *OrderService) ListOpenPositions(userID uint64) ([]PositionListItem, err
 	items := make([]PositionListItem, 0, len(positions))
 	for _, pos := range positions {
 		items = append(items, buildPositionOutputValue(pos, pos.MarkPrice))
+	}
+	return items, nil
+}
+
+func (s *OrderService) ListOrders(userID uint64, limit int) ([]OrderListItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var orders []model.Order
+	if err := s.db.Where("user_id = ?", userID).Order("created_at desc").Limit(limit).Find(&orders).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]OrderListItem, 0, len(orders))
+	for _, order := range orders {
+		items = append(items, OrderListItem{
+			ID:            order.ID,
+			ClientOrderID: order.ClientOrderID,
+			Symbol:        order.Symbol,
+			Side:          order.Side,
+			Type:          order.Type,
+			Size:          order.Size,
+			ExecPrice:     order.ExecPrice,
+			Leverage:      order.Leverage,
+			Margin:        order.Margin,
+			ReduceOnly:    order.ReduceOnly,
+			Status:        order.Status,
+			Fee:           order.Fee,
+			RealizedPnL:   order.RealizedPnL,
+			CreatedAt:     order.CreatedAt.UTC().Format(time.RFC3339),
+		})
 	}
 	return items, nil
 }

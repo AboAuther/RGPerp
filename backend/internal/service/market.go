@@ -120,8 +120,15 @@ func (s *MarketService) GetTicker(symbol string) (*TickerOutput, error) {
 }
 
 func (s *MarketService) UpsertTick(symbol string, markPrice decimal.Decimal, ts time.Time, source string) error {
+	var symbolRow model.Symbol
+	tickSize := decimal.RequireFromString("0.000001")
+	if err := s.db.Select("tick_size").Where("name = ?", symbol).First(&symbolRow).Error; err == nil && symbolRow.TickSize.GreaterThan(decimal.Zero) {
+		tickSize = symbolRow.TickSize
+	}
+
+	markPrice = quantizeToStep(markPrice, tickSize)
 	indexPrice := markPrice
-	halfSpread := markPrice.Mul(decimal.NewFromFloat(0.0002))
+	halfSpread := quantizeToStep(markPrice.Mul(decimal.RequireFromString("0.0002")), tickSize)
 	bestBid := markPrice.Sub(halfSpread)
 	bestAsk := markPrice.Add(halfSpread)
 
@@ -191,7 +198,7 @@ func (s *MarketService) GetKlines(symbol, interval string, startTime, endTime ti
 				high:   price,
 				low:    price,
 				close:  price,
-				volume: decimal.Zero,
+				volume: decimal.NewFromInt(1),
 			}
 			buckets[ts] = b
 			order = append(order, ts)
@@ -204,6 +211,7 @@ func (s *MarketService) GetKlines(symbol, interval string, startTime, endTime ti
 			b.low = price
 		}
 		b.close = price
+		b.volume = b.volume.Add(decimal.NewFromInt(1))
 	}
 
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
@@ -224,6 +232,13 @@ func (s *MarketService) GetKlines(symbol, interval string, startTime, endTime ti
 		})
 	}
 	return result, nil
+}
+
+func quantizeToStep(value, step decimal.Decimal) decimal.Decimal {
+	if step.LessThanOrEqual(decimal.Zero) {
+		return value.Round(6)
+	}
+	return value.Div(step).Round(0).Mul(step).Round(6)
 }
 
 func parseInterval(interval string) (time.Duration, error) {
