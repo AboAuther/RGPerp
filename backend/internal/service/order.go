@@ -150,13 +150,12 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 
 	price := tick.MarkPrice
 	notional := price.Mul(input.Size)
-	if notional.GreaterThan(symbol.MaxPositionNotional) {
-		return nil, apperr.ErrMaxPositionExceeded
-	}
-
+	minRequiredMargin := minimumRequiredMargin(notional, input.Leverage)
 	requiredMargin := input.Margin
 	if requiredMargin.LessThanOrEqual(decimal.Zero) {
-		requiredMargin = notional.Div(decimal.NewFromInt(int64(input.Leverage)))
+		requiredMargin = minRequiredMargin
+	} else if requiredMargin.LessThan(minRequiredMargin) {
+		return nil, apperr.ErrInsufficientMargin
 	}
 	requiredMargin = requiredMargin.Round(18)
 	fee := notional.Mul(symbol.TakerFeeRate).Round(18)
@@ -252,6 +251,9 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			if input.ReduceOnly {
 				return apperr.ErrNoOpenPosition
 			}
+			if notional.GreaterThan(symbol.MaxPositionNotional) {
+				return apperr.ErrMaxPositionExceeded
+			}
 			totalNeed := requiredMargin.Add(fee)
 			if account.AvailableBalance.LessThan(totalNeed) {
 				return apperr.ErrInsufficientMargin
@@ -264,7 +266,8 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			account.LockedBalance = account.LockedBalance.Add(requiredMargin)
 			marginConsumed = requiredMargin
 
-			effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, input.Leverage)
+			positionLeverage := effectivePositionLeverage(price, input.Size, requiredMargin, input.Leverage)
+			effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, positionLeverage)
 			position := model.Position{
 				UserID:           input.UserID,
 				Symbol:           input.Symbol,
@@ -275,7 +278,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				MarkPrice:        price,
 				LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, input.Size, requiredMargin, effectiveMaintenance),
 				Margin:           requiredMargin,
-				Leverage:         input.Leverage,
+				Leverage:         positionLeverage,
 				Status:           "open",
 			}
 			if err := tx.Create(&position).Error; err != nil {
@@ -315,12 +318,17 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				newSize := existing.Size.Add(input.Size)
 				newMargin := existing.Margin.Add(requiredMargin)
 				newEntry := existing.EntryPrice.Mul(existing.Size).Add(price.Mul(input.Size)).Div(newSize)
+				newNotional := price.Mul(newSize)
+				if newNotional.GreaterThan(symbol.MaxPositionNotional) {
+					return apperr.ErrMaxPositionExceeded
+				}
 
 				account.AvailableBalance = account.AvailableBalance.Sub(totalNeed)
 				account.LockedBalance = account.LockedBalance.Add(requiredMargin)
 				marginConsumed = requiredMargin
 
-				effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, input.Leverage)
+				positionLeverage := effectivePositionLeverage(newEntry, newSize, newMargin, existing.Leverage)
+				effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, positionLeverage)
 				result := tx.Model(&model.Position{}).
 					Where("id = ? AND version = ?", existing.ID, positionVersion).
 					Updates(map[string]interface{}{
@@ -328,7 +336,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						"margin":            newMargin,
 						"entry_price":       newEntry,
 						"mark_price":        price,
-						"leverage":          input.Leverage,
+						"leverage":          positionLeverage,
 						"margin_mode":       activeMarginMode,
 						"liquidation_price": calculateLiquidationPrice(existing.Side, activeMarginMode, newEntry, newSize, newMargin, effectiveMaintenance),
 						"version":           gorm.Expr("version + 1"),
@@ -400,6 +408,9 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						return apperr.ErrOrderRejected
 					}
 					flipNotional := price.Mul(flipSize)
+					if flipNotional.GreaterThan(symbol.MaxPositionNotional) {
+						return apperr.ErrMaxPositionExceeded
+					}
 					flipMargin := flipNotional.Div(decimal.NewFromInt(int64(input.Leverage))).Round(18)
 					if account.AvailableBalance.LessThan(flipMargin) {
 						return apperr.ErrInsufficientMargin
@@ -412,7 +423,8 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					account.LockedBalance = account.LockedBalance.Add(flipMargin)
 					marginConsumed = marginConsumed.Add(flipMargin)
 
-					effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, input.Leverage)
+					positionLeverage := effectivePositionLeverage(price, flipSize, flipMargin, input.Leverage)
+					effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, positionLeverage)
 					newPos := model.Position{
 						UserID:           input.UserID,
 						Symbol:           input.Symbol,
@@ -423,7 +435,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						MarkPrice:        price,
 						LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, flipSize, flipMargin, effectiveMaintenance),
 						Margin:           flipMargin,
-						Leverage:         input.Leverage,
+						Leverage:         positionLeverage,
 						Status:           "open",
 					}
 					if err := tx.Create(&newPos).Error; err != nil {
@@ -768,6 +780,31 @@ func calculatePnL(side string, entryPrice, exitPrice, size decimal.Decimal) deci
 	}
 }
 
+func minimumRequiredMargin(notional decimal.Decimal, leverage uint32) decimal.Decimal {
+	if leverage == 0 {
+		return decimal.Zero
+	}
+	return notional.Div(decimal.NewFromInt(int64(leverage))).Round(18)
+}
+
+func effectivePositionLeverage(entryPrice, size, margin decimal.Decimal, fallback uint32) uint32 {
+	if entryPrice.LessThanOrEqual(decimal.Zero) || size.LessThanOrEqual(decimal.Zero) || margin.LessThanOrEqual(decimal.Zero) {
+		if fallback == 0 {
+			return 1
+		}
+		return fallback
+	}
+
+	leverage := entryPrice.Mul(size).Div(margin).Ceil().IntPart()
+	if leverage <= 0 {
+		if fallback == 0 {
+			return 1
+		}
+		return fallback
+	}
+	return uint32(leverage)
+}
+
 func effectiveMaintenanceRate(initialRate, maintenanceRate decimal.Decimal, leverage uint32) decimal.Decimal {
 	if leverage == 0 {
 		return maintenanceRate
@@ -949,7 +986,12 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 func loadProjectedExternalPosition(tx *gorm.DB, symbol string) (decimal.Decimal, error) {
 	var lastTask model.HedgeTask
 	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastTask).Error; err == nil {
-		return lastTask.TargetHedgePosition, nil
+		switch lastTask.Status {
+		case "pending", "retrying", "completed", "noop":
+			return lastTask.TargetHedgePosition, nil
+		default:
+			return lastTask.CurrentHedgePosition, nil
+		}
 	} else if err != gorm.ErrRecordNotFound {
 		return decimal.Zero, err
 	}

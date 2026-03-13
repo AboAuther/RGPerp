@@ -49,7 +49,7 @@ func (s *Service) Run(ctx context.Context, interval time.Duration) {
 
 func (s *Service) processPending(ctx context.Context) error {
 	var tasks []model.HedgeTask
-	if err := s.db.Where("status IN ?", []string{"pending", "retrying"}).Order("id asc").Limit(20).Find(&tasks).Error; err != nil {
+	if err := s.db.Where("status IN ?", []string{"pending", "retrying", "buffered"}).Order("id asc").Limit(20).Find(&tasks).Error; err != nil {
 		return err
 	}
 
@@ -68,7 +68,7 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			Where("id = ?", taskID).First(&task).Error; err != nil {
 			return err
 		}
-		if task.Status != "pending" && task.Status != "retrying" {
+		if task.Status != "pending" && task.Status != "retrying" && task.Status != "buffered" {
 			return nil
 		}
 
@@ -101,6 +101,24 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			order.Side = "long"
 		}
 		order.Size = delta.Abs()
+		markPrice, err := loadLatestMarkPriceForSymbol(tx, task.Symbol, order.Price)
+		if err != nil {
+			return err
+		}
+		order.Price = markPrice
+		minNotional := s.adapter.MinOrderNotional(task.Symbol)
+		orderNotional := markPrice.Mul(order.Size)
+		if minNotional.GreaterThan(decimal.Zero) && orderNotional.LessThan(minNotional) {
+			task.Status = "buffered"
+			task.ErrorMessage = fmt.Sprintf("buffered until hedge notional reaches %s USDC (current %s USDC)", minNotional.StringFixed(2), orderNotional.Round(4).String())
+			order.Status = "buffered"
+			order.ErrorMessage = task.ErrorMessage
+			order.Price = markPrice
+			if err := tx.Save(&order).Error; err != nil {
+				return err
+			}
+			return tx.Save(&task).Error
+		}
 		reduceOnly := !currentExternal.IsZero() &&
 			currentExternal.Sign() != delta.Sign() &&
 			delta.Abs().LessThanOrEqual(currentExternal.Abs())
@@ -236,9 +254,29 @@ func normalizeOrderStatus(status string) string {
 	switch status {
 	case "filled", "mock_filled":
 		return "filled"
+	case "buffered":
+		return "buffered"
+	case "retrying":
+		return "retrying"
+	case "failed":
+		return "failed"
 	case "submitted":
 		return "submitted"
 	default:
 		return "filled"
 	}
+}
+
+func loadLatestMarkPriceForSymbol(db *gorm.DB, symbol string, fallback decimal.Decimal) (decimal.Decimal, error) {
+	var tick model.PriceTick
+	if err := db.Where("symbol = ?", strings.ToUpper(strings.TrimSpace(symbol))).Order("created_at desc, id desc").First(&tick).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fallback, nil
+		}
+		return decimal.Zero, err
+	}
+	if tick.MarkPrice.GreaterThan(decimal.Zero) {
+		return tick.MarkPrice, nil
+	}
+	return fallback, nil
 }

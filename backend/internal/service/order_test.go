@@ -262,6 +262,133 @@ func TestOrderService_CreateHedgeTaskUsesLatestTargetWhenSnapshotLags(t *testing
 	}
 }
 
+func TestOrderService_RejectsCustomMarginBelowMinimum(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	_, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "low-custom-margin",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+		Margin:        decimal.RequireFromString("0.1"),
+	})
+	if err == nil {
+		t.Fatal("expected insufficient margin rejection")
+	}
+	if err != apperr.ErrInsufficientMargin {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestOrderService_AddingPositionRecomputesEffectiveLeverage(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "base-position",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		Size:          decimal.RequireFromString("0.01"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("open base position failed: %v", err)
+	}
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "small-high-leverage-add",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      50,
+	}); err != nil {
+		t.Fatalf("add position failed: %v", err)
+	}
+
+	var pos model.Position
+	if err := db.Where("user_id = ? AND symbol = ? AND status = ?", 1, "BTC-PERP", "open").First(&pos).Error; err != nil {
+		t.Fatalf("load position failed: %v", err)
+	}
+	if pos.Leverage != 11 {
+		t.Fatalf("expected effective leverage 11 after add, got %d", pos.Leverage)
+	}
+}
+
+func TestOrderService_RejectsAggregatePositionNotionalExceedingLimit(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if err := db.Model(&model.Symbol{}).
+		Where("name = ?", "BTC-PERP").
+		Update("max_position_notional", decimal.RequireFromString("900")).Error; err != nil {
+		t.Fatalf("update max position notional failed: %v", err)
+	}
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "limit-first-open",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		Size:          decimal.RequireFromString("0.01"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("first order failed: %v", err)
+	}
+
+	_, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "limit-second-open",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	})
+	if err == nil {
+		t.Fatal("expected aggregate max position rejection")
+	}
+	if err != apperr.ErrMaxPositionExceeded {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRiskState_UsesActualLockedMarginAsTotalInitial(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "custom-margin-open",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+		Margin:        decimal.RequireFromString("10"),
+	}); err != nil {
+		t.Fatalf("custom margin order failed: %v", err)
+	}
+
+	riskState, err := buildRiskState(db, 1)
+	if err != nil {
+		t.Fatalf("build risk state failed: %v", err)
+	}
+	if !riskState.TotalInitial.Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("expected total initial 10, got %s", riskState.TotalInitial)
+	}
+	if !riskState.TotalInitial.Equal(riskState.LockedBalance) {
+		t.Fatalf("expected total initial %s to match locked balance %s", riskState.TotalInitial, riskState.LockedBalance)
+	}
+}
+
 func mustNewOrderTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

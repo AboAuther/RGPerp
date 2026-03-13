@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 import AppLayout from './components/layout/AppLayout'
 import TradePage from './pages/TradePage'
 import AccountPage from './pages/AccountPage'
+import AdminPage from './pages/AdminPage'
 import LandingPage from './pages/LandingPage'
 import DocsPage from './pages/DocsPage'
 import { useThemeStore } from './stores/themeStore'
@@ -76,6 +77,7 @@ export default function App() {
               <Route path="/app" element={<AppLayout />}>
                 <Route index element={<TradePage />} />
                 <Route path="account" element={<AccountPage />} />
+                <Route path="admin" element={<AdminPage />} />
               </Route>
             </Routes>
           </BrowserRouter>

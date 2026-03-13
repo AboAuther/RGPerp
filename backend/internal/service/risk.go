@@ -66,12 +66,9 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 			maintenanceRate = effectiveMaintenanceRate(sym.InitialMarginRate, sym.MaintenanceMarginRate, pos.Leverage)
 		}
 		notional := markPrice.Mul(pos.Size)
-		initialMargin := pos.Margin
-		if pos.Leverage > 0 {
-			initialMargin = notional.Div(decimal.NewFromInt(int64(pos.Leverage))).Round(18)
-		}
+		initialMargin := pos.Margin.Round(18)
 		totalInitial = totalInitial.Add(initialMargin)
-		totalMaintenance = totalMaintenance.Add(markPrice.Mul(pos.Size).Mul(maintenanceRate))
+		totalMaintenance = totalMaintenance.Add(notional.Mul(maintenanceRate))
 	}
 
 	equity := account.AvailableBalance.Add(account.LockedBalance).Add(unrealized).Round(18)

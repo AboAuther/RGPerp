@@ -16,10 +16,10 @@ import (
 )
 
 type OrderRequest struct {
-	Symbol string
-	Side   string
-	Size   decimal.Decimal
-	Price  decimal.Decimal
+	Symbol     string
+	Side       string
+	Size       decimal.Decimal
+	Price      decimal.Decimal
 	ReduceOnly bool
 }
 
@@ -33,6 +33,7 @@ type OrderResult struct {
 type Adapter interface {
 	PlaceOrder(ctx context.Context, req OrderRequest) (*OrderResult, error)
 	GetPosition(ctx context.Context, symbol string) (decimal.Decimal, error)
+	MinOrderNotional(symbol string) decimal.Decimal
 }
 
 type MockAdapter struct {
@@ -94,6 +95,10 @@ func (a *MockAdapter) GetPosition(_ context.Context, symbol string) (decimal.Dec
 	return a.positions[strings.ToUpper(strings.TrimSpace(symbol))], nil
 }
 
+func (a *MockAdapter) MinOrderNotional(_ string) decimal.Decimal {
+	return decimal.Zero
+}
+
 func useHyperliquidAdapter(cfg *config.Config) bool {
 	apiURL := strings.TrimSpace(cfg.Hyperliquid.APIURL)
 	wallet := strings.TrimSpace(strings.ToLower(cfg.Hyperliquid.WalletAddress))
@@ -108,6 +113,10 @@ func useHyperliquidAdapter(cfg *config.Config) bool {
 		return false
 	}
 	return true
+}
+
+func (a *HyperliquidAdapter) MinOrderNotional(_ string) decimal.Decimal {
+	return decimal.NewFromInt(10)
 }
 
 func (a *HyperliquidAdapter) runBridge(ctx context.Context, payload map[string]any) (map[string]any, error) {

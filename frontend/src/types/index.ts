@@ -218,3 +218,76 @@ export interface DepositRecord {
   status: string
   created_at: string
 }
+
+export interface AdminOverview {
+  trading_symbols: number
+  open_positions: number
+  accounts_at_risk: number
+  accounts_reduce_only: number
+  accounts_liquidating: number
+  pending_hedges: number
+  buffered_hedges: number
+  retrying_hedges: number
+  failed_hedges: number
+  recent_liquidations: number
+  unhealthy_symbols: number
+  total_absolute_drift: string
+  last_snapshot_at?: string
+}
+
+export interface AdminAlertItem {
+  level: string
+  category: string
+  title: string
+  detail: string
+  symbol?: string
+  created_at: string
+}
+
+export interface AdminHedgeTaskItem {
+  id: number
+  symbol: string
+  trigger_type: string
+  internal_net_position: string
+  target_hedge_position: string
+  current_hedge_position: string
+  drift: string
+  status: string
+  error_message: string
+  created_at: string
+  updated_at: string
+  last_order_status: string
+  last_order_side: string
+  last_order_size: string
+  last_order_price: string
+  last_order_retry_count: number
+}
+
+export interface AdminRiskSnapshotItem {
+  id: number
+  symbol: string
+  total_long_position: string
+  total_short_position: string
+  net_position: string
+  external_hedge_position: string
+  drift: string
+  hedge_healthy: boolean
+  total_open_interest: string
+  created_at: string
+}
+
+export interface AdminLiquidationItem {
+  id: number
+  user_id: number
+  symbol: string
+  side: string
+  size: string
+  entry_price: string
+  mark_price: string
+  liquidation_price: string
+  execution_price: string
+  realized_pnl: string
+  type: string
+  status: string
+  created_at: string
+}

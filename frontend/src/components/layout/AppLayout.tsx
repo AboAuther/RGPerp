@@ -1,5 +1,6 @@
 import { Button, Layout, Menu, Space, Typography, theme } from 'antd'
 import {
+  DashboardOutlined,
   BulbOutlined,
   LineChartOutlined,
   MoonOutlined,
@@ -14,6 +15,7 @@ const { Header, Content, Footer } = Layout
 const menuItems = [
   { key: '/app', icon: <LineChartOutlined />, label: '交易' },
   { key: '/app/account', icon: <WalletOutlined />, label: '资产' },
+  { key: '/app/admin', icon: <DashboardOutlined />, label: '管理' },
 ]
 
 export default function AppLayout() {
@@ -22,7 +24,11 @@ export default function AppLayout() {
   const { token } = theme.useToken()
   const { mode, toggleMode } = useThemeStore()
   const isDark = mode === 'dark'
-  const selectedMenuKey = location.pathname.startsWith('/app/account') ? '/app/account' : '/app'
+  const selectedMenuKey = location.pathname.startsWith('/app/account')
+    ? '/app/account'
+    : location.pathname.startsWith('/app/admin')
+      ? '/app/admin'
+      : '/app'
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>

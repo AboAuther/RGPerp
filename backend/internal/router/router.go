@@ -24,6 +24,7 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	withdrawalSvc := service.NewWithdrawalService(db, cfg)
 	marketSvc := service.NewMarketService(db)
 	orderSvc := service.NewOrderService(db)
+	adminSvc := service.NewAdminService(db)
 
 	authH := handler.NewAuthHandler(authSvc)
 	accountH := handler.NewAccountHandler(accountSvc)
@@ -31,6 +32,7 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	withdrawalH := handler.NewWithdrawalHandler(withdrawalSvc)
 	marketH := handler.NewMarketHandler(marketSvc)
 	orderH := handler.NewOrderHandler(orderSvc)
+	adminH := handler.NewAdminHandler(adminSvc)
 
 	r.GET("/health", healthH.Health)
 
@@ -54,6 +56,11 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authenticated.GET("/open-orders", orderH.ListOpenOrders)
 	authenticated.GET("/trades", orderH.ListTrades)
 	authenticated.GET("/positions", orderH.ListPositions)
+	authenticated.GET("/admin/overview", adminH.Overview)
+	authenticated.GET("/admin/hedge-tasks", adminH.HedgeTasks)
+	authenticated.GET("/admin/risk-snapshots", adminH.RiskSnapshots)
+	authenticated.GET("/admin/liquidations", adminH.Liquidations)
+	authenticated.GET("/admin/alerts", adminH.Alerts)
 
 	return r
 }
