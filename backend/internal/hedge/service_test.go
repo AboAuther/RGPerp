@@ -55,7 +55,7 @@ func TestService_ProcessPending(t *testing.T) {
 		Side:        "long",
 		Size:        decimal.RequireFromString("1"),
 		Price:       decimal.RequireFromString("85000"),
-		Status:      "mock_pending",
+		Status:      "pending",
 	}
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatalf("create order: %v", err)
@@ -107,7 +107,7 @@ func TestService_ProcessPending_ShortHedge(t *testing.T) {
 		Side:        "short",
 		Size:        decimal.RequireFromString("0.5"),
 		Price:       decimal.RequireFromString("85000"),
-		Status:      "mock_pending",
+		Status:      "pending",
 	}
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatalf("create order: %v", err)
@@ -163,7 +163,7 @@ func TestService_ProcessPending_BuffersSmallNotionalForHyperliquid(t *testing.T)
 		Side:        "long",
 		Size:        decimal.RequireFromString("0.1"),
 		Price:       decimal.RequireFromString("89"),
-		Status:      "mock_pending",
+		Status:      "pending",
 	}
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatalf("create order: %v", err)

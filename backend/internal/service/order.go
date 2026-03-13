@@ -25,17 +25,21 @@ func NewOrderService(db *gorm.DB) *OrderService {
 }
 
 type CreateOrderInput struct {
-	UserID        uint64
-	ClientOrderID string
-	Symbol        string
-	Side          string
-	Type          string
-	MarginMode    string
-	Size          decimal.Decimal
-	Leverage      uint32
-	Margin        decimal.Decimal
-	ReduceOnly    bool
-	TestMode      bool
+	UserID          uint64
+	ClientOrderID   string
+	Symbol          string
+	Side            string
+	Type            string
+	MarginMode      string
+	Size            decimal.Decimal
+	LimitPrice      decimal.Decimal
+	TimeInForce     string
+	Leverage        uint32
+	Margin          decimal.Decimal
+	ReduceOnly      bool
+	TestMode        bool
+	ParentOrderID   *uint64
+	ExecutionSource string
 }
 
 type OrderExecutionOutput struct {
@@ -47,6 +51,35 @@ type OrderExecutionOutput struct {
 type AccountBalanceBrief struct {
 	AvailableBalance decimal.Decimal `json:"available_balance"`
 	LockedBalance    decimal.Decimal `json:"locked_balance"`
+}
+
+type limitReservation struct {
+	Margin decimal.Decimal
+	Fee    decimal.Decimal
+}
+
+func hasReservation(res limitReservation) bool {
+	return res.Margin.GreaterThan(decimal.Zero) || res.Fee.GreaterThan(decimal.Zero)
+}
+
+func settleReservation(account *model.Account, reserved limitReservation, actualMargin, actualFee decimal.Decimal) (decimal.Decimal, decimal.Decimal) {
+	if !hasReservation(reserved) {
+		total := actualMargin.Add(actualFee)
+		account.AvailableBalance = account.AvailableBalance.Sub(total)
+		account.LockedBalance = account.LockedBalance.Add(actualMargin)
+		return total, actualMargin
+	}
+
+	account.LockedBalance = account.LockedBalance.Sub(reserved.Margin)
+	if actualMargin.GreaterThan(decimal.Zero) {
+		account.LockedBalance = account.LockedBalance.Add(actualMargin)
+	}
+
+	totalReserved := reserved.Margin.Add(reserved.Fee)
+	totalActual := actualMargin.Add(actualFee)
+	delta := totalActual.Sub(totalReserved)
+	account.AvailableBalance = account.AvailableBalance.Sub(delta)
+	return delta, actualMargin.Sub(reserved.Margin)
 }
 
 type PositionListItem struct {
@@ -76,6 +109,8 @@ type OrderListItem struct {
 	Type          string          `json:"type"`
 	MarginMode    string          `json:"margin_mode"`
 	Size          decimal.Decimal `json:"size"`
+	LimitPrice    decimal.Decimal `json:"limit_price"`
+	TimeInForce   string          `json:"time_in_force"`
 	ExecPrice     decimal.Decimal `json:"exec_price"`
 	Leverage      uint32          `json:"leverage"`
 	Margin        decimal.Decimal `json:"margin"`
@@ -84,6 +119,8 @@ type OrderListItem struct {
 	Fee           decimal.Decimal `json:"fee"`
 	RealizedPnL   decimal.Decimal `json:"realized_pnl"`
 	CreatedAt     string          `json:"created_at"`
+	TriggeredAt   string          `json:"triggered_at,omitempty"`
+	CancelReason  string          `json:"cancel_reason,omitempty"`
 }
 
 type TradeListItem struct {
@@ -104,8 +141,12 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 	input.Side = strings.ToLower(strings.TrimSpace(input.Side))
 	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
 	input.MarginMode = normalizeMarginMode(input.MarginMode)
+	input.TimeInForce = normalizeTimeInForce(input.TimeInForce)
+	if input.ExecutionSource == "" {
+		input.ExecutionSource = "direct"
+	}
 
-	if input.Type != "market" {
+	if input.Type != "market" && input.Type != "limit" {
 		return nil, apperr.ErrOrderRejected
 	}
 	if input.Side != "long" && input.Side != "short" {
@@ -136,6 +177,14 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 	if input.Size.LessThan(symbol.MinOrderSize) {
 		return nil, apperr.ErrInvalidOrderSize
 	}
+	if input.Type == "limit" {
+		if input.LimitPrice.LessThanOrEqual(decimal.Zero) {
+			return nil, apperr.ErrBadRequest
+		}
+		if input.TimeInForce != "gtc" {
+			return nil, apperr.ErrBadRequest
+		}
+	}
 
 	var tick model.PriceTick
 	if err := s.db.Where("symbol = ?", input.Symbol).Order("created_at desc").First(&tick).Error; err != nil {
@@ -149,6 +198,9 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 	}
 
 	price := tick.MarkPrice
+	if input.Type == "limit" {
+		price = input.LimitPrice
+	}
 	notional := price.Mul(input.Size)
 	minRequiredMargin := minimumRequiredMargin(notional, input.Leverage)
 	requiredMargin := input.Margin
@@ -183,18 +235,22 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			return err
 		}
 
-		var existing model.Position
-		existingErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		var openPositions []model.Position
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("user_id = ? AND symbol = ? AND status = ?", input.UserID, input.Symbol, "open").
-			First(&existing).Error
-		hasPosition := existingErr == nil
-		if existingErr != nil && existingErr != gorm.ErrRecordNotFound {
-			return existingErr
+			Find(&openPositions).Error; err != nil {
+			return err
 		}
 
-		var existingPtr *model.Position
-		if hasPosition {
-			existingPtr = &existing
+		var sameSidePosition *model.Position
+		var oppositeSidePosition *model.Position
+		for i := range openPositions {
+			pos := &openPositions[i]
+			if pos.Side == input.Side {
+				sameSidePosition = pos
+				continue
+			}
+			oppositeSidePosition = pos
 		}
 
 		riskState, err := syncUserRiskStatusTx(tx, input.UserID)
@@ -207,30 +263,14 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 		if riskState.RiskLevel == "liquidating" {
 			return apperr.ErrAccountLiquidating
 		}
-		if riskState.RiskLevel == "reduce_only" && orderIncreasesExposure(existingPtr, input.Side, input.Size, input.ReduceOnly) {
+		var exposurePosition *model.Position
+		if !input.ReduceOnly {
+			exposurePosition = sameSidePosition
+		} else {
+			exposurePosition = oppositeSidePosition
+		}
+		if riskState.RiskLevel == "reduce_only" && orderIncreasesExposure(exposurePosition, input.Side, input.Size, input.ReduceOnly) {
 			return apperr.ErrReduceOnlyMode
-		}
-
-		order := model.Order{
-			ClientOrderID: input.ClientOrderID,
-			UserID:        input.UserID,
-			Symbol:        input.Symbol,
-			Side:          input.Side,
-			Type:          input.Type,
-			MarginMode:    input.MarginMode,
-			Size:          input.Size,
-			Price:         price,
-			Leverage:      input.Leverage,
-			Margin:        requiredMargin,
-			ReduceOnly:    input.ReduceOnly,
-			Status:        "filled",
-			FilledSize:    input.Size,
-			ExecPrice:     price,
-			Fee:           fee,
-		}
-
-		if err := tx.Create(&order).Error; err != nil {
-			return err
 		}
 
 		realizedPnL := decimal.Zero
@@ -238,16 +278,121 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 		marginReleased := decimal.Zero
 		var positionOut *PositionListItem
 		activeMarginMode := input.MarginMode
-		if hasPosition {
-			activeMarginMode = existing.MarginMode
-			if existing.MarginMode != input.MarginMode && (existing.Side == input.Side || input.Size.GreaterThan(existing.Size)) {
+		if input.ReduceOnly {
+			if oppositeSidePosition == nil {
+				return apperr.ErrNoOpenPosition
+			}
+			activeMarginMode = oppositeSidePosition.MarginMode
+			if oppositeSidePosition.MarginMode != input.MarginMode {
+				return apperr.ErrOrderRejected
+			}
+		} else {
+			if sameSidePosition != nil {
+				activeMarginMode = sameSidePosition.MarginMode
+				if sameSidePosition.MarginMode != input.MarginMode {
+					return apperr.ErrOrderRejected
+				}
+			}
+			if oppositeSidePosition != nil && oppositeSidePosition.MarginMode != input.MarginMode {
 				return apperr.ErrOrderRejected
 			}
 		}
 
 		snapshotAvailable := account.AvailableBalance
+		reservation := limitReservation{}
+		var parentOrder *model.Order
+		if input.ParentOrderID != nil {
+			parentOrder = &model.Order{}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND user_id = ? AND type = ? AND parent_order_id IS NULL", *input.ParentOrderID, input.UserID, "limit").
+				First(parentOrder).Error; err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return apperr.ErrOrderRejected
+				}
+				return err
+			}
+			if parentOrder.Status != "triggered" {
+				return apperr.ErrOrderRejected
+			}
+			reservation.Margin = parentOrder.ReservedMargin
+			reservation.Fee = parentOrder.ReservedFee
+		}
 
-		if !hasPosition {
+		order := model.Order{
+			ClientOrderID:   input.ClientOrderID,
+			UserID:          input.UserID,
+			Symbol:          input.Symbol,
+			Side:            input.Side,
+			Type:            input.Type,
+			MarginMode:      activeMarginMode,
+			Size:            input.Size,
+			Price:           price,
+			LimitPrice:      input.LimitPrice,
+			TimeInForce:     input.TimeInForce,
+			Leverage:        input.Leverage,
+			Margin:          requiredMargin,
+			ReduceOnly:      input.ReduceOnly,
+			Status:          "filled",
+			FilledSize:      input.Size,
+			ExecPrice:       price,
+			Fee:             fee,
+			ParentOrderID:   input.ParentOrderID,
+			ExecutionSource: input.ExecutionSource,
+		}
+		if input.Type == "limit" {
+			order.Status = "open"
+			order.FilledSize = decimal.Zero
+			order.ExecPrice = decimal.Zero
+			order.Fee = decimal.Zero
+		}
+
+		if input.Type == "limit" && !input.ReduceOnly {
+			order.ReservedMargin = requiredMargin
+			order.ReservedFee = fee
+		}
+
+		if err := tx.Create(&order).Error; err != nil {
+			return err
+		}
+
+		if input.Type == "limit" {
+			if !input.ReduceOnly {
+				totalNeed := requiredMargin.Add(fee)
+				if account.AvailableBalance.LessThan(totalNeed) {
+					return apperr.ErrInsufficientMargin
+				}
+				if orderIncreasesExposure(exposurePosition, input.Side, input.Size, input.ReduceOnly) && riskState.FreeCollateral.LessThan(totalNeed) {
+					return apperr.ErrOrderRejected
+				}
+				account.AvailableBalance = account.AvailableBalance.Sub(totalNeed)
+				account.LockedBalance = account.LockedBalance.Add(requiredMargin)
+				if err := tx.Create(&model.LedgerEntry{
+					UserID:        input.UserID,
+					Type:          "limit_reserve",
+					Amount:        totalNeed,
+					BalanceBefore: snapshotAvailable,
+					BalanceAfter:  snapshotAvailable.Sub(totalNeed),
+					ReferenceType: "order",
+					ReferenceID:   order.ID,
+					Description:   "reserved margin and fee budget for limit order",
+				}).Error; err != nil {
+					return err
+				}
+				if err := tx.Save(&account).Error; err != nil {
+					return err
+				}
+			}
+			response = &OrderExecutionOutput{
+				Order: order,
+				Account: AccountBalanceBrief{
+					AvailableBalance: account.AvailableBalance,
+					LockedBalance:    account.LockedBalance,
+				},
+			}
+			return nil
+		}
+
+		if sameSidePosition == nil && (!input.ReduceOnly || oppositeSidePosition == nil) {
 			if input.ReduceOnly {
 				return apperr.ErrNoOpenPosition
 			}
@@ -255,15 +400,23 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				return apperr.ErrMaxPositionExceeded
 			}
 			totalNeed := requiredMargin.Add(fee)
-			if account.AvailableBalance.LessThan(totalNeed) {
+			availableNeed := totalNeed
+			if hasReservation(reservation) {
+				delta := totalNeed.Sub(reservation.Margin.Add(reservation.Fee))
+				if delta.GreaterThan(decimal.Zero) {
+					availableNeed = delta
+				} else {
+					availableNeed = decimal.Zero
+				}
+			}
+			if account.AvailableBalance.LessThan(availableNeed) {
 				return apperr.ErrInsufficientMargin
 			}
-			if orderIncreasesExposure(existingPtr, input.Side, input.Size, input.ReduceOnly) && riskState.FreeCollateral.LessThan(totalNeed) {
+			if orderIncreasesExposure(exposurePosition, input.Side, input.Size, input.ReduceOnly) && riskState.FreeCollateral.LessThan(availableNeed) {
 				return apperr.ErrOrderRejected
 			}
 
-			account.AvailableBalance = account.AvailableBalance.Sub(totalNeed)
-			account.LockedBalance = account.LockedBalance.Add(requiredMargin)
+			settleReservation(&account, reservation, requiredMargin, fee)
 			marginConsumed = requiredMargin
 
 			positionLeverage := effectivePositionLeverage(price, input.Size, requiredMargin, input.Leverage)
@@ -304,16 +457,10 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				return err
 			}
 		} else {
-			positionVersion := existing.Version
-
-			if existing.Side == input.Side && !input.ReduceOnly {
+			if sameSidePosition != nil && !input.ReduceOnly {
+				existing := *sameSidePosition
+				positionVersion := existing.Version
 				totalNeed := requiredMargin.Add(fee)
-				if account.AvailableBalance.LessThan(totalNeed) {
-					return apperr.ErrInsufficientMargin
-				}
-				if riskState.FreeCollateral.LessThan(totalNeed) {
-					return apperr.ErrOrderRejected
-				}
 
 				newSize := existing.Size.Add(input.Size)
 				newMargin := existing.Margin.Add(requiredMargin)
@@ -323,8 +470,23 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					return apperr.ErrMaxPositionExceeded
 				}
 
-				account.AvailableBalance = account.AvailableBalance.Sub(totalNeed)
-				account.LockedBalance = account.LockedBalance.Add(requiredMargin)
+				availableNeed := totalNeed
+				if hasReservation(reservation) {
+					delta := totalNeed.Sub(reservation.Margin.Add(reservation.Fee))
+					if delta.GreaterThan(decimal.Zero) {
+						availableNeed = delta
+					} else {
+						availableNeed = decimal.Zero
+					}
+				}
+				if account.AvailableBalance.LessThan(availableNeed) {
+					return apperr.ErrInsufficientMargin
+				}
+				if riskState.FreeCollateral.LessThan(availableNeed) {
+					return apperr.ErrOrderRejected
+				}
+
+				settleReservation(&account, reservation, requiredMargin, fee)
 				marginConsumed = requiredMargin
 
 				positionLeverage := effectivePositionLeverage(newEntry, newSize, newMargin, existing.Leverage)
@@ -348,6 +510,8 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					return apperr.ErrConcurrentUpdate
 				}
 			} else {
+				existing := *oppositeSidePosition
+				positionVersion := existing.Version
 				closeSize := decimal.Min(existing.Size, input.Size)
 				marginReleased = existing.Margin.Mul(closeSize).Div(existing.Size).Round(18)
 				realizedPnL = calculatePnL(existing.Side, existing.EntryPrice, price, closeSize).Round(18)
@@ -404,48 +568,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 
 				flipSize := input.Size.Sub(closeSize)
 				if flipSize.GreaterThan(decimal.Zero) {
-					if input.ReduceOnly {
-						return apperr.ErrOrderRejected
-					}
-					flipNotional := price.Mul(flipSize)
-					if flipNotional.GreaterThan(symbol.MaxPositionNotional) {
-						return apperr.ErrMaxPositionExceeded
-					}
-					flipMargin := flipNotional.Div(decimal.NewFromInt(int64(input.Leverage))).Round(18)
-					if account.AvailableBalance.LessThan(flipMargin) {
-						return apperr.ErrInsufficientMargin
-					}
-					if riskState.FreeCollateral.LessThan(flipMargin) {
-						return apperr.ErrOrderRejected
-					}
-
-					account.AvailableBalance = account.AvailableBalance.Sub(flipMargin)
-					account.LockedBalance = account.LockedBalance.Add(flipMargin)
-					marginConsumed = marginConsumed.Add(flipMargin)
-
-					positionLeverage := effectivePositionLeverage(price, flipSize, flipMargin, input.Leverage)
-					effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, positionLeverage)
-					newPos := model.Position{
-						UserID:           input.UserID,
-						Symbol:           input.Symbol,
-						Side:             input.Side,
-						MarginMode:       input.MarginMode,
-						Size:             flipSize,
-						EntryPrice:       price,
-						MarkPrice:        price,
-						LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, flipSize, flipMargin, effectiveMaintenance),
-						Margin:           flipMargin,
-						Leverage:         positionLeverage,
-						Status:           "open",
-					}
-					if err := tx.Create(&newPos).Error; err != nil {
-						return err
-					}
-					builtPosition, buildErr := s.buildPositionOutput(tx, account, newPos, price, effectiveMaintenance)
-					if buildErr != nil {
-						return buildErr
-					}
-					positionOut = builtPosition
+					return apperr.ErrOppositePositionMode
 				}
 			}
 
@@ -504,8 +627,11 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			}
 		}
 
-		if !hasPosition {
+		if sameSidePosition == nil && (!input.ReduceOnly || oppositeSidePosition == nil) {
 			afterMarginLock := snapshotAvailable.Sub(requiredMargin)
+			if reservation.Margin.GreaterThan(decimal.Zero) || reservation.Fee.GreaterThan(decimal.Zero) {
+				afterMarginLock = account.AvailableBalance.Add(fee)
+			}
 			if err := tx.Create(&model.LedgerEntry{
 				UserID:        input.UserID,
 				Type:          "margin_lock",
@@ -520,18 +646,31 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			}
 
 			if fee.GreaterThan(decimal.Zero) {
+				balanceBeforeFee := afterMarginLock
+				if reservation.Margin.GreaterThan(decimal.Zero) || reservation.Fee.GreaterThan(decimal.Zero) {
+					balanceBeforeFee = account.AvailableBalance.Add(fee)
+				}
 				if err := tx.Create(&model.LedgerEntry{
 					UserID:        input.UserID,
 					Type:          "trading_fee",
 					Amount:        fee,
-					BalanceBefore: afterMarginLock,
-					BalanceAfter:  afterMarginLock.Sub(fee),
+					BalanceBefore: balanceBeforeFee,
+					BalanceAfter:  balanceBeforeFee.Sub(fee),
 					ReferenceType: "order",
 					ReferenceID:   order.ID,
 					Description:   fmt.Sprintf("taker fee for %s", input.Symbol),
 				}).Error; err != nil {
 					return err
 				}
+			}
+		}
+
+		if parentOrder != nil {
+			if err := tx.Model(parentOrder).Updates(map[string]any{
+				"reserved_margin": decimal.Zero,
+				"reserved_fee":    decimal.Zero,
+			}).Error; err != nil {
+				return err
 			}
 		}
 
@@ -611,7 +750,7 @@ func (s *OrderService) ListOrders(userID uint64, limit int) ([]OrderListItem, er
 	}
 
 	var orders []model.Order
-	if err := s.db.Where("user_id = ?", userID).Order("created_at desc").Limit(limit).Find(&orders).Error; err != nil {
+	if err := s.db.Where("user_id = ? AND parent_order_id IS NULL", userID).Order("created_at desc").Limit(limit).Find(&orders).Error; err != nil {
 		return nil, err
 	}
 
@@ -625,6 +764,8 @@ func (s *OrderService) ListOrders(userID uint64, limit int) ([]OrderListItem, er
 			Type:          order.Type,
 			MarginMode:    order.MarginMode,
 			Size:          order.Size,
+			LimitPrice:    order.LimitPrice,
+			TimeInForce:   order.TimeInForce,
 			ExecPrice:     order.ExecPrice,
 			Leverage:      order.Leverage,
 			Margin:        order.Margin,
@@ -633,7 +774,11 @@ func (s *OrderService) ListOrders(userID uint64, limit int) ([]OrderListItem, er
 			Fee:           order.Fee,
 			RealizedPnL:   order.RealizedPnL,
 			CreatedAt:     order.CreatedAt.UTC().Format(time.RFC3339),
+			CancelReason:  order.CancelReason,
 		})
+		if order.TriggeredAt != nil {
+			items[len(items)-1].TriggeredAt = order.TriggeredAt.UTC().Format(time.RFC3339)
+		}
 	}
 	return items, nil
 }
@@ -647,7 +792,7 @@ func (s *OrderService) ListOpenOrders(userID uint64, limit int) ([]OrderListItem
 	}
 
 	var orders []model.Order
-	if err := s.db.Where("user_id = ? AND status IN ?", userID, []string{"open", "pending", "partially_filled"}).
+	if err := s.db.Where("user_id = ? AND parent_order_id IS NULL AND status IN ?", userID, []string{"open", "pending", "partially_filled", "triggered"}).
 		Order("created_at desc").
 		Limit(limit).
 		Find(&orders).Error; err != nil {
@@ -664,6 +809,8 @@ func (s *OrderService) ListOpenOrders(userID uint64, limit int) ([]OrderListItem
 			Type:          order.Type,
 			MarginMode:    order.MarginMode,
 			Size:          order.Size,
+			LimitPrice:    order.LimitPrice,
+			TimeInForce:   order.TimeInForce,
 			ExecPrice:     order.ExecPrice,
 			Leverage:      order.Leverage,
 			Margin:        order.Margin,
@@ -672,9 +819,92 @@ func (s *OrderService) ListOpenOrders(userID uint64, limit int) ([]OrderListItem
 			Fee:           order.Fee,
 			RealizedPnL:   order.RealizedPnL,
 			CreatedAt:     order.CreatedAt.UTC().Format(time.RFC3339),
+			CancelReason:  order.CancelReason,
 		})
+		if order.TriggeredAt != nil {
+			items[len(items)-1].TriggeredAt = order.TriggeredAt.UTC().Format(time.RFC3339)
+		}
 	}
 	return items, nil
+}
+
+func (s *OrderService) CancelOrder(userID, orderID uint64) (*OrderListItem, error) {
+	var out *OrderListItem
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var order model.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND user_id = ? AND parent_order_id IS NULL", orderID, userID).
+			First(&order).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return apperr.ErrOrderRejected
+			}
+			return err
+		}
+		if order.Type != "limit" || order.Status != "open" {
+			return apperr.ErrOrderRejected
+		}
+		if order.ReservedMargin.GreaterThan(decimal.Zero) || order.ReservedFee.GreaterThan(decimal.Zero) {
+			var account model.Account
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("user_id = ?", userID).
+				First(&account).Error; err != nil {
+				return err
+			}
+			totalRefund := order.ReservedMargin.Add(order.ReservedFee)
+			balanceBefore := account.AvailableBalance
+			account.AvailableBalance = account.AvailableBalance.Add(totalRefund)
+			account.LockedBalance = account.LockedBalance.Sub(order.ReservedMargin)
+			if err := tx.Save(&account).Error; err != nil {
+				return err
+			}
+			if err := tx.Create(&model.LedgerEntry{
+				UserID:        userID,
+				Type:          "limit_release",
+				Amount:        totalRefund,
+				BalanceBefore: balanceBefore,
+				BalanceAfter:  account.AvailableBalance,
+				ReferenceType: "order",
+				ReferenceID:   order.ID,
+				Description:   "released reserved margin and fee budget for canceled limit order",
+			}).Error; err != nil {
+				return err
+			}
+		}
+		cancelReason := "user_cancelled"
+		if err := tx.Model(&order).Updates(map[string]any{
+			"status":          "canceled",
+			"cancel_reason":   cancelReason,
+			"reserved_margin": decimal.Zero,
+			"reserved_fee":    decimal.Zero,
+		}).Error; err != nil {
+			return err
+		}
+		out = &OrderListItem{
+			ID:            order.ID,
+			ClientOrderID: order.ClientOrderID,
+			Symbol:        order.Symbol,
+			Side:          order.Side,
+			Type:          order.Type,
+			MarginMode:    order.MarginMode,
+			Size:          order.Size,
+			LimitPrice:    order.LimitPrice,
+			TimeInForce:   order.TimeInForce,
+			ExecPrice:     order.ExecPrice,
+			Leverage:      order.Leverage,
+			Margin:        order.Margin,
+			ReduceOnly:    order.ReduceOnly,
+			Status:        "canceled",
+			Fee:           order.Fee,
+			RealizedPnL:   order.RealizedPnL,
+			CreatedAt:     order.CreatedAt.UTC().Format(time.RFC3339),
+			CancelReason:  cancelReason,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *OrderService) ListTrades(userID uint64, limit int) ([]TradeListItem, error) {
@@ -861,6 +1091,16 @@ func normalizeMarginMode(mode string) string {
 	}
 }
 
+func normalizeTimeInForce(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", "gtc":
+		return "gtc"
+	default:
+		return ""
+	}
+}
+
 func (s *OrderService) loadSymbolMap(positions []model.Position) (map[string]model.Symbol, error) {
 	if len(positions) == 0 {
 		return map[string]model.Symbol{}, nil
@@ -969,6 +1209,9 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 	if err := tx.Create(&task).Error; err != nil {
 		return err
 	}
+	if err := supersedeOlderHedgeTasks(tx, symbol, task.ID); err != nil {
+		return err
+	}
 	if status == "noop" {
 		return nil
 	}
@@ -978,9 +1221,28 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 		Side:            side,
 		Size:            size,
 		Price:           markPrice,
-		ExternalOrderID: fmt.Sprintf("mock-%s-%d", strings.ToLower(symbol), task.ID),
-		Status:          "mock_pending",
+		ExternalOrderID: "",
+		Status:          "pending",
 	}).Error
+}
+
+func supersedeOlderHedgeTasks(tx *gorm.DB, symbol string, keepTaskID uint64) error {
+	activeStatuses := []string{"pending", "retrying", "buffered", "failed"}
+	if err := tx.Model(&model.HedgeTask{}).
+		Where("symbol = ? AND id <> ? AND status IN ?", symbol, keepTaskID, activeStatuses).
+		Updates(map[string]any{
+			"status":        "superseded",
+			"error_message": "superseded by a newer hedge task",
+		}).Error; err != nil {
+		return err
+	}
+
+	return tx.Model(&model.HedgeOrder{}).
+		Where("symbol = ? AND hedge_task_id <> ? AND status IN ?", symbol, keepTaskID, activeStatuses).
+		Updates(map[string]any{
+			"status":        "superseded",
+			"error_message": "superseded by a newer hedge task",
+		}).Error
 }
 
 func loadProjectedExternalPosition(tx *gorm.DB, symbol string) (decimal.Decimal, error) {

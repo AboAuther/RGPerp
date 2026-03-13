@@ -21,11 +21,15 @@
 
 ## 快速启动
 
-### 1. 启动基础设施
+### 1. 配置环境变量
 
-```bash
-docker compose up -d mysql redis rabbitmq
-```
+复制并填写 `backend/.env`、`frontend/.env.local`、`contracts/.env`。
+
+可参考：
+
+- `backend/.env.example`
+- `frontend/.env.example`
+- `contracts/.env.example`
 
 ### 2. 启动本地链
 
@@ -40,37 +44,38 @@ anvil
 - Vault、MockUSDC、Indexer、提现签名联调都需要本地 EVM 链
 - Hyperliquid Testnet 仅用于价格联调与对冲，不替代本地 Vault 开发链
 
-### 3. 配置环境变量
-
-复制并填写 `backend/.env`、`frontend/.env.local`、`contracts/.env`。
-
-可参考：
-
-- `backend/.env.example`
-- `frontend/.env.example`
-- `contracts/.env.example`
-
-### 4. 部署合约
+### 3. 部署合约
 
 ```bash
 cd contracts && forge script script/Deploy.s.sol --broadcast --rpc-url http://127.0.0.1:8545
 ```
 
-### 5. 启动后端
+### 4. 一键启动后端服务
 
 ```bash
-cd backend && go run cmd/server/main.go
+docker compose up -d mysql redis rabbitmq server indexer hedger liquidator matcher
 ```
 
-### 6. 启动链下服务
+说明：
+
+- `server` 暴露在 `http://127.0.0.1:18080`
+- `indexer / hedger / liquidator / matcher` 作为后台 worker 常驻运行
+- 容器内默认会把 `DB_HOST / REDIS_ADDR / RABBITMQ_URL` 指向 compose 网络
+- 容器访问本机 Anvil 默认通过 `DOCKER_RPC_URL=http://host.docker.internal:8545`
+
+查看日志：
 
 ```bash
-cd backend && go run cmd/indexer/main.go
-cd backend && go run cmd/hedger/main.go
-cd backend && go run cmd/liquidator/main.go
+docker compose logs -f server indexer hedger liquidator matcher
 ```
 
-### 7. 启动前端
+停止服务：
+
+```bash
+docker compose down
+```
+
+### 5. 启动前端
 
 ```bash
 cd frontend && pnpm install && pnpm dev

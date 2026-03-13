@@ -22,8 +22,8 @@ func TestAdminService_OverviewAndLists(t *testing.T) {
 	if overview.TradingSymbols != 1 {
 		t.Fatalf("expected 1 trading symbol, got %d", overview.TradingSymbols)
 	}
-	if overview.PendingHedges != 1 {
-		t.Fatalf("expected 1 pending hedge, got %d", overview.PendingHedges)
+	if overview.PendingHedges != 0 {
+		t.Fatalf("expected 0 pending hedges after latest-task filtering, got %d", overview.PendingHedges)
 	}
 	if overview.BufferedHedges != 1 {
 		t.Fatalf("expected 1 buffered hedge, got %d", overview.BufferedHedges)
@@ -36,8 +36,11 @@ func TestAdminService_OverviewAndLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list hedge tasks: %v", err)
 	}
-	if len(hedges) < 2 {
-		t.Fatalf("expected at least 2 hedge tasks, got %d", len(hedges))
+	if len(hedges) != 1 {
+		t.Fatalf("expected 1 current unresolved hedge task, got %d", len(hedges))
+	}
+	if hedges[0].Status != "buffered" {
+		t.Fatalf("expected latest unresolved hedge task to be buffered, got %s", hedges[0].Status)
 	}
 
 	snapshots, err := svc.ListRiskSnapshots(10)
@@ -138,7 +141,7 @@ func mustNewAdminTestDB(t *testing.T) *gorm.DB {
 		Side:        "long",
 		Size:        decimal.RequireFromString("0.01"),
 		Price:       decimal.RequireFromString("69900"),
-		Status:      "mock_pending",
+		Status:      "pending",
 	}).Error; err != nil {
 		t.Fatalf("create pending order: %v", err)
 	}

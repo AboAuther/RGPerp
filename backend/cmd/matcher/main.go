@@ -13,8 +13,8 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/AboAuther/RGPerp/backend/internal/config"
-	"github.com/AboAuther/RGPerp/backend/internal/hedge"
 	"github.com/AboAuther/RGPerp/backend/internal/model"
+	"github.com/AboAuther/RGPerp/backend/internal/service"
 )
 
 func main() {
@@ -38,26 +38,22 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	adapter, err := hedge.NewAdapter(cfg)
-	if err != nil {
-		logger.Fatal("failed to initialize hedge adapter", zap.Error(err))
-	}
-	svc := hedge.NewService(db, logger, adapter)
-	go svc.Run(ctx, 2*time.Second)
 
-	logger.Info("hedger process initialized",
-		zap.String("hyperliquid_api_url", cfg.Hyperliquid.APIURL),
-		zap.String("wallet_address", cfg.Hyperliquid.WalletAddress),
+	matcher := service.NewLimitMatcherService(db, logger)
+	go matcher.Run(ctx, time.Second)
+
+	logger.Info("limit matcher initialized",
+		zap.String("db_host", cfg.DB.Host),
 		zap.String("price_source", cfg.Price.Source),
 	)
 
-	waitForShutdown(logger, "hedger", cancel)
+	waitForShutdown(logger, "matcher", cancel)
 }
 
-func waitForShutdown(logger *zap.Logger, service string, cancel context.CancelFunc) {
+func waitForShutdown(logger *zap.Logger, serviceName string, cancel context.CancelFunc) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	cancel()
-	logger.Info("service stopped", zap.String("service", service))
+	logger.Info("service stopped", zap.String("service", serviceName))
 }

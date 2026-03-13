@@ -51,6 +51,23 @@ function hedgeStatusColor(status: string) {
   }
 }
 
+function formatAdminPair(symbol?: string) {
+  if (!symbol) {
+    return '--'
+  }
+  return symbol.replace('-PERP', '/USDC')
+}
+
+function formatDriftSummary(overview?: AdminOverview) {
+  const rows = overview?.drift_by_symbol ?? []
+  if (rows.length === 0) {
+    return '暂无快照'
+  }
+  return rows
+    .map((item) => `${formatAdminPair(item.symbol)} ${formatAmount(item.drift, 4)}`)
+    .join(' / ')
+}
+
 export default function AdminPage() {
   const overviewQuery = useQuery({
     queryKey: ['admin-overview'],
@@ -88,8 +105,8 @@ export default function AdminPage() {
     <div className="rg-app-page rg-app-page--admin">
       <Typography.Title level={3}>系统管理</Typography.Title>
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} md={12} xl={6}>
-          <Card className="rg-glass-card">
+        <Col xs={24} md={12} xl={6} style={{ display: 'flex' }}>
+          <Card className="rg-glass-card rg-admin-summary-card" style={{ width: '100%' }}>
             <Typography.Text type="secondary">交易中市场</Typography.Text>
             <Typography.Title level={3} style={{ margin: 0 }}>
               {overview?.trading_symbols ?? '--'}
@@ -97,8 +114,8 @@ export default function AdminPage() {
             <Typography.Text type="secondary">当前 open positions: {overview?.open_positions ?? '--'}</Typography.Text>
           </Card>
         </Col>
-        <Col xs={24} md={12} xl={6}>
-          <Card className="rg-glass-card">
+        <Col xs={24} md={12} xl={6} style={{ display: 'flex' }}>
+          <Card className="rg-glass-card rg-admin-summary-card" style={{ width: '100%' }}>
             <Typography.Text type="secondary">风险账户</Typography.Text>
             <Typography.Title level={3} style={{ margin: 0 }}>
               {(overview?.accounts_at_risk ?? 0) + (overview?.accounts_reduce_only ?? 0) + (overview?.accounts_liquidating ?? 0)}
@@ -108,8 +125,8 @@ export default function AdminPage() {
             </Typography.Text>
           </Card>
         </Col>
-        <Col xs={24} md={12} xl={6}>
-          <Card className="rg-glass-card">
+        <Col xs={24} md={12} xl={6} style={{ display: 'flex' }}>
+          <Card className="rg-glass-card rg-admin-summary-card" style={{ width: '100%' }}>
             <Typography.Text type="secondary">对冲任务</Typography.Text>
             <Typography.Title level={3} style={{ margin: 0 }}>
               {(overview?.pending_hedges ?? 0) + (overview?.buffered_hedges ?? 0) + (overview?.retrying_hedges ?? 0) + (overview?.failed_hedges ?? 0)}
@@ -119,14 +136,17 @@ export default function AdminPage() {
             </Typography.Text>
           </Card>
         </Col>
-        <Col xs={24} md={12} xl={6}>
-          <Card className="rg-glass-card">
-            <Typography.Text type="secondary">净敞口偏差</Typography.Text>
+        <Col xs={24} md={12} xl={6} style={{ display: 'flex' }}>
+          <Card className="rg-glass-card rg-admin-summary-card" style={{ width: '100%' }}>
+            <Typography.Text type="secondary">各交易对净敞口偏差</Typography.Text>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              {formatAmount(overview?.total_absolute_drift, 4)}
+              {overview?.unhealthy_symbols ?? 0}
             </Typography.Title>
             <Typography.Text type="secondary">
-              Unhealthy Symbols {overview?.unhealthy_symbols ?? 0} · 最近快照 {overview?.last_snapshot_at ? new Date(overview.last_snapshot_at).toLocaleString() : '--'}
+              {formatDriftSummary(overview)}
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              异常交易对 {overview?.unhealthy_symbols ?? 0} · 最近快照 {overview?.last_snapshot_at ? new Date(overview.last_snapshot_at).toLocaleString() : '--'}
             </Typography.Text>
           </Card>
         </Col>
@@ -146,7 +166,7 @@ export default function AdminPage() {
                   <Space size={8}>
                     <Tag color={levelTag(item.level)}>{item.category}</Tag>
                     <span>{item.title}</span>
-                    {item.symbol ? <Tag>{item.symbol}</Tag> : null}
+                    {item.symbol ? <Tag>{formatAdminPair(item.symbol)}</Tag> : null}
                   </Space>
                 }
                 description={`${item.detail} · ${new Date(item.created_at).toLocaleString()}`}
@@ -167,7 +187,7 @@ export default function AdminPage() {
               scroll={{ x: 980 }}
               columns={[
                 { title: '时间', dataIndex: 'updated_at', key: 'updated_at', width: 168, render: (v: string) => new Date(v).toLocaleString() },
-                { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 96 },
+                { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 96, render: (value: string) => formatAdminPair(value) },
                 { title: '触发', dataIndex: 'trigger_type', key: 'trigger_type', width: 84 },
                 { title: '目标', dataIndex: 'target_hedge_position', key: 'target_hedge_position', width: 92, render: (v: string) => formatAmount(v, 4) },
                 { title: '当前', dataIndex: 'current_hedge_position', key: 'current_hedge_position', width: 92, render: (v: string) => formatAmount(v, 4) },
@@ -188,7 +208,7 @@ export default function AdminPage() {
               scroll={{ x: 980 }}
               columns={[
                 { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 168, render: (v: string) => new Date(v).toLocaleString() },
-                { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 96 },
+                { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 96, render: (value: string) => formatAdminPair(value) },
                 { title: '内部净仓', dataIndex: 'net_position', key: 'net_position', width: 96, render: (v: string) => formatAmount(v, 4) },
                 { title: '外部对冲', dataIndex: 'external_hedge_position', key: 'external_hedge_position', width: 96, render: (v: string) => formatAmount(v, 4) },
                 { title: '偏差', dataIndex: 'drift', key: 'drift', width: 96, render: (v: string) => formatAmount(v, 4) },
@@ -209,7 +229,7 @@ export default function AdminPage() {
               columns={[
                 { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 168, render: (v: string) => new Date(v).toLocaleString() },
                 { title: '用户', dataIndex: 'user_id', key: 'user_id', width: 72 },
-                { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 96 },
+                { title: '交易对', dataIndex: 'symbol', key: 'symbol', width: 96, render: (value: string) => formatAdminPair(value) },
                 { title: '方向', dataIndex: 'side', key: 'side', width: 76, render: (v: string) => <Tag color={v === 'long' ? 'green' : 'red'}>{v}</Tag> },
                 { title: '数量', dataIndex: 'size', key: 'size', width: 84, render: (v: string) => formatAmount(v, 4) },
                 { title: '开仓价', dataIndex: 'entry_price', key: 'entry_price', width: 96, render: (v: string) => formatAmount(v, 2) },

@@ -64,6 +64,10 @@ export interface Order {
   leverage: number
   margin: string
   reduce_only: boolean
+  limit_price?: string
+  time_in_force?: string
+  reserved_margin?: string
+  reserved_fee?: string
   status: string
   filled_size: string
   exec_price: string
@@ -80,6 +84,8 @@ export interface OrderHistoryItem {
   type: string
   margin_mode: 'isolated' | 'cross'
   size: string
+  limit_price: string
+  time_in_force: string
   exec_price: string
   leverage: number
   margin: string
@@ -88,6 +94,8 @@ export interface OrderHistoryItem {
   fee: string
   realized_pnl: string
   created_at: string
+  triggered_at?: string
+  cancel_reason?: string
 }
 
 export interface TradeHistoryItem {
@@ -233,6 +241,11 @@ export interface AdminOverview {
   unhealthy_symbols: number
   total_absolute_drift: string
   last_snapshot_at?: string
+  drift_by_symbol?: Array<{
+    symbol: string
+    drift: string
+    hedge_healthy: boolean
+  }>
 }
 
 export interface AdminAlertItem {

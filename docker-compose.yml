@@ -1,7 +1,35 @@
+name: rgperp
+
+x-backend-common: &backend-common
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  env_file:
+    - ./backend/.env
+  volumes:
+    - ./backend/.env:/app/.env:ro
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  environment:
+    DB_HOST: mysql
+    DB_PORT: "3306"
+    REDIS_ADDR: redis:6379
+    RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    RPC_URL: ${DOCKER_RPC_URL:-http://host.docker.internal:8545}
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
 services:
   mysql:
     image: mysql:8.0
     container_name: rgperp-mysql
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: rg_perp
@@ -11,14 +39,15 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
     container_name: rgperp-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -27,11 +56,12 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: rgperp-rabbitmq
+    restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
@@ -44,7 +74,46 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  server:
+    <<: *backend-common
+    container_name: rgperp-server
+    command: ["/app/bin/server"]
+    environment:
+      SERVER_PORT: "18080"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RPC_URL: ${DOCKER_RPC_URL:-http://host.docker.internal:8545}
+    ports:
+      - "18080:18080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  indexer:
+    <<: *backend-common
+    container_name: rgperp-indexer
+    command: ["/app/bin/indexer"]
+
+  hedger:
+    <<: *backend-common
+    container_name: rgperp-hedger
+    command: ["/app/bin/hedger"]
+
+  liquidator:
+    <<: *backend-common
+    container_name: rgperp-liquidator
+    command: ["/app/bin/liquidator"]
+
+  matcher:
+    <<: *backend-common
+    container_name: rgperp-matcher
+    command: ["/app/bin/matcher"]
 
 volumes:
   mysql_data:

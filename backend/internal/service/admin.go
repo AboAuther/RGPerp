@@ -30,6 +30,13 @@ type AdminOverview struct {
 	UnhealthySymbols    int64           `json:"unhealthy_symbols"`
 	TotalAbsoluteDrift  decimal.Decimal `json:"total_absolute_drift"`
 	LastSnapshotAt      string          `json:"last_snapshot_at"`
+	DriftBySymbol       []AdminDriftRow `json:"drift_by_symbol"`
+}
+
+type AdminDriftRow struct {
+	Symbol      string          `json:"symbol"`
+	Drift       decimal.Decimal `json:"drift"`
+	HedgeHealthy bool           `json:"hedge_healthy"`
 }
 
 type AdminHedgeTaskItem struct {
@@ -107,20 +114,25 @@ func (s *AdminService) GetOverview() (*AdminOverview, error) {
 	if err := s.db.Model(&model.User{}).Where("status = ?", "liquidating").Count(&overview.AccountsLiquidating).Error; err != nil {
 		return nil, err
 	}
-	if err := s.db.Model(&model.HedgeTask{}).Where("status = ?", "pending").Count(&overview.PendingHedges).Error; err != nil {
-		return nil, err
-	}
-	if err := s.db.Model(&model.HedgeTask{}).Where("status = ?", "buffered").Count(&overview.BufferedHedges).Error; err != nil {
-		return nil, err
-	}
-	if err := s.db.Model(&model.HedgeTask{}).Where("status = ?", "retrying").Count(&overview.RetryingHedges).Error; err != nil {
-		return nil, err
-	}
-	if err := s.db.Model(&model.HedgeTask{}).Where("status = ?", "failed").Count(&overview.FailedHedges).Error; err != nil {
-		return nil, err
-	}
 	if err := s.db.Model(&model.Liquidation{}).Where("created_at >= ?", time.Now().Add(-24*time.Hour)).Count(&overview.RecentLiquidations).Error; err != nil {
 		return nil, err
+	}
+
+	activeHedgeTasks, err := s.latestUnresolvedHedgeTasks(200)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range activeHedgeTasks {
+		switch task.Status {
+		case "pending":
+			overview.PendingHedges++
+		case "buffered":
+			overview.BufferedHedges++
+		case "retrying":
+			overview.RetryingHedges++
+		case "failed":
+			overview.FailedHedges++
+		}
 	}
 
 	var latestBySymbol []model.SystemRiskSnapshot
@@ -142,6 +154,11 @@ func (s *AdminService) GetOverview() (*AdminOverview, error) {
 			overview.UnhealthySymbols++
 		}
 		totalAbsDrift = totalAbsDrift.Add(item.Drift.Abs())
+		overview.DriftBySymbol = append(overview.DriftBySymbol, AdminDriftRow{
+			Symbol:       item.Symbol,
+			Drift:        item.Drift.Round(18),
+			HedgeHealthy: item.HedgeHealthy,
+		})
 		if item.CreatedAt.After(lastSnapshot) {
 			lastSnapshot = item.CreatedAt
 		}
@@ -162,9 +179,14 @@ func (s *AdminService) ListHedgeTasks(limit int) ([]AdminHedgeTaskItem, error) {
 		limit = 100
 	}
 
-	var tasks []model.HedgeTask
-	if err := s.db.Order("id desc").Limit(limit).Find(&tasks).Error; err != nil {
+	tasks, err := s.latestUnresolvedHedgeTasks(limit)
+	if err != nil {
 		return nil, err
+	}
+	if len(tasks) == 0 {
+		if err := s.db.Where("trigger_type <> ?", "reconcile").Order("id desc").Limit(limit).Find(&tasks).Error; err != nil {
+			return nil, err
+		}
 	}
 	items := make([]AdminHedgeTaskItem, 0, len(tasks))
 	for _, task := range tasks {
@@ -263,8 +285,8 @@ func (s *AdminService) ListAlerts(limit int) ([]AdminAlertItem, error) {
 
 	alerts := make([]AdminAlertItem, 0, limit)
 
-	var failedTasks []model.HedgeTask
-	if err := s.db.Where("status IN ?", []string{"failed", "buffered", "retrying"}).Order("updated_at desc").Limit(limit).Find(&failedTasks).Error; err != nil {
+	failedTasks, err := s.latestUnresolvedHedgeTasks(limit)
+	if err != nil {
 		return nil, err
 	}
 	for _, task := range failedTasks {
@@ -292,8 +314,8 @@ func (s *AdminService) ListAlerts(limit int) ([]AdminAlertItem, error) {
 		}
 	}
 
-	var snapshots []model.SystemRiskSnapshot
-	if err := s.db.Where("hedge_healthy = ?", false).Order("created_at desc").Limit(limit).Find(&snapshots).Error; err != nil {
+	snapshots, err := s.latestUnhealthyRiskSnapshots(limit)
+	if err != nil {
 		return nil, err
 	}
 	for _, item := range snapshots {
@@ -329,4 +351,51 @@ func (s *AdminService) ListAlerts(limit int) ([]AdminAlertItem, error) {
 	}
 
 	return alerts, nil
+}
+
+func (s *AdminService) latestUnresolvedHedgeTasks(limit int) ([]model.HedgeTask, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var tasks []model.HedgeTask
+	if err := s.db.Raw(`
+		SELECT t.*
+		FROM hedge_tasks t
+		INNER JOIN (
+			SELECT symbol, MAX(id) AS max_id
+			FROM hedge_tasks
+			GROUP BY symbol
+		) latest ON latest.max_id = t.id
+		WHERE t.status IN ('pending', 'buffered', 'retrying', 'failed')
+		  AND t.trigger_type <> 'reconcile'
+		ORDER BY t.updated_at DESC
+		LIMIT ?
+	`, limit).Scan(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func (s *AdminService) latestUnhealthyRiskSnapshots(limit int) ([]model.SystemRiskSnapshot, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var snapshots []model.SystemRiskSnapshot
+	if err := s.db.Raw(`
+		SELECT s.*
+		FROM system_risk_snapshots s
+		INNER JOIN (
+			SELECT symbol, MAX(id) AS max_id
+			FROM system_risk_snapshots
+			GROUP BY symbol
+		) latest ON latest.max_id = s.id
+		WHERE s.hedge_healthy = false
+		ORDER BY s.created_at DESC
+		LIMIT ?
+	`, limit).Scan(&snapshots).Error; err != nil {
+		return nil, err
+	}
+	return snapshots, nil
 }

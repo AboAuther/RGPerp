@@ -47,6 +47,7 @@ var (
 	ErrDuplicateClientOrder = New(http.StatusConflict, 30007, "duplicate client order id")
 	ErrReduceOnlyMode       = New(http.StatusBadRequest, 30008, "account is in reduce-only mode")
 	ErrAccountLiquidating   = New(http.StatusForbidden, 30009, "account is being liquidated")
+	ErrOppositePositionMode = New(http.StatusBadRequest, 30010, "reduce-only order exceeds current opposite-side position size")
 )
 
 // Position errors (40xxx)

@@ -78,6 +78,17 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			return err
 		}
 
+		if task.TriggerType == "reconcile" {
+			task.Status = "superseded"
+			task.ErrorMessage = "reconcile task disabled; drift is now monitor-only"
+			order.Status = "superseded"
+			order.ErrorMessage = task.ErrorMessage
+			if err := tx.Save(&order).Error; err != nil {
+				return err
+			}
+			return tx.Save(&task).Error
+		}
+
 		currentExternal, err := s.adapter.GetPosition(ctx, task.Symbol)
 		if err != nil {
 			return err
@@ -219,6 +230,26 @@ func (s *Service) captureSymbolRisk(sym model.Symbol) error {
 
 	drift := externalPos.Sub(internalNet).Round(18)
 	threshold := decimal.Max(sym.LotSize, decimal.RequireFromString("0.01"))
+	minNotional := s.adapter.MinOrderNotional(sym.Name)
+	if minNotional.GreaterThan(decimal.Zero) {
+		var referencePrice decimal.Decimal
+		if len(positions) > 0 {
+			referencePrice = positions[0].MarkPrice
+		}
+		if referencePrice.LessThanOrEqual(decimal.Zero) {
+			price, priceErr := loadLatestMarkPriceForSymbol(s.db, sym.Name, decimal.Zero)
+			if priceErr != nil {
+				return priceErr
+			}
+			referencePrice = price
+		}
+		if referencePrice.GreaterThan(decimal.Zero) {
+			minSize := minNotional.Div(referencePrice).Round(18)
+			if minSize.GreaterThan(threshold) {
+				threshold = minSize
+			}
+		}
+	}
 	healthy := drift.Abs().LessThanOrEqual(threshold)
 
 	openInterest := decimal.Zero

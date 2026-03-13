@@ -87,6 +87,51 @@ function formatCountdown(timestamp?: number): string {
   return [hours, minutes, seconds].map((item) => String(item).padStart(2, '0')).join(':')
 }
 
+function createDisplayDepth(mid: number, bestBid: number, bestAsk: number, tickSize: number) {
+  if (!Number.isFinite(mid) || !Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || mid <= 0) {
+    return { bids: [], asks: [], maxTotal: 0 }
+  }
+
+  const safeTick = Number.isFinite(tickSize) && tickSize > 0 ? tickSize : Math.max(mid * 0.0001, 0.01)
+  const spread = Math.max(bestAsk - bestBid, safeTick)
+  const levels = 8
+  const asks = Array.from({ length: levels }, (_, index) => {
+    const level = index + 1
+    const price = bestAsk + spread * index + safeTick * level
+    const size = Number((0.35 + level * 0.18 + (level % 2) * 0.07).toFixed(4))
+    const total = Number((size * price).toFixed(2))
+    return { price, size, total }
+  }).reverse()
+
+  const bids = Array.from({ length: levels }, (_, index) => {
+    const level = index + 1
+    const price = Math.max(bestBid - spread * index - safeTick * level, safeTick)
+    const size = Number((0.32 + level * 0.19 + ((level + 1) % 2) * 0.05).toFixed(4))
+    const total = Number((size * price).toFixed(2))
+    return { price, size, total }
+  })
+
+  const maxTotal = Math.max(...asks.map((item) => item.total), ...bids.map((item) => item.total), 1)
+  return { bids, asks, maxTotal }
+}
+
+function getOrderStatusMeta(status?: string) {
+  switch ((status ?? '').toLowerCase()) {
+    case 'open':
+      return { label: '已挂单', color: 'gold' as const, alertType: 'info' as const }
+    case 'triggered':
+      return { label: '已触发', color: 'processing' as const, alertType: 'info' as const }
+    case 'filled':
+      return { label: '已成交', color: 'cyan' as const, alertType: 'success' as const }
+    case 'canceled':
+      return { label: '已取消', color: 'default' as const, alertType: 'warning' as const }
+    case 'rejected':
+      return { label: '已拒绝', color: 'red' as const, alertType: 'error' as const }
+    default:
+      return { label: status || '--', color: 'default' as const, alertType: 'info' as const }
+  }
+}
+
 function riskMeta(level?: string) {
   switch ((level ?? '').toLowerCase()) {
     case 'active':
@@ -325,20 +370,26 @@ export default function TradePage() {
 
   const orderMutation = useMutation({
     mutationFn: async (values: {
+      symbol?: string
       side: 'long' | 'short'
+      type: 'market' | 'limit'
       margin_mode: 'isolated' | 'cross'
       size: string
+      limit_price?: string
+      time_in_force?: string
       leverage: number
       reduce_only: boolean
       test_mode: boolean
     }) =>
       (
         await post<OrderExecution>('/orders', {
-          symbol,
+          symbol: values.symbol ?? symbol,
           side: values.side,
-          type: 'market',
+          type: values.type,
           margin_mode: values.margin_mode,
           size: values.size,
+          limit_price: values.limit_price,
+          time_in_force: values.time_in_force,
           leverage: Number(values.leverage),
           reduce_only: values.reduce_only,
           test_mode: values.test_mode,
@@ -347,13 +398,13 @@ export default function TradePage() {
       ).data!,
     onSuccess: (result) => {
       setLatestExecution(result)
-      orderForm.resetFields(['size', 'reduce_only'])
+      orderForm.resetFields(['size', 'limit_price', 'reduce_only'])
       void queryClient.invalidateQueries({ queryKey: ['trade-account'] })
       void queryClient.invalidateQueries({ queryKey: ['positions'] })
       void queryClient.invalidateQueries({ queryKey: ['orders'] })
       void queryClient.invalidateQueries({ queryKey: ['open-orders'] })
       void queryClient.invalidateQueries({ queryKey: ['trades'] })
-      void messageApi.success('市价单已成交')
+      void messageApi.success(result.order.type === 'limit' ? '限价单已提交' : '市价单已成交')
     },
     onError: (error) => {
       void messageApi.error(getErrorMessage(error, '下单失败'))
@@ -361,15 +412,76 @@ export default function TradePage() {
   })
 
   const submitOrder = (values: {
+    symbol?: string
     side: 'long' | 'short'
+    type: 'market' | 'limit'
     margin_mode: 'isolated' | 'cross'
     size: string
+    limit_price?: string
+    time_in_force?: string
     leverage: number
     reduce_only: boolean
     test_mode: boolean
   }) => {
     orderMutation.mutate(values)
   }
+
+  const cancelOrderMutation = useMutation({
+    mutationFn: async (orderId: number) => (await post<OrderHistoryItem>(`/orders/${orderId}/cancel`)).data!,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['open-orders'] })
+      await queryClient.invalidateQueries({ queryKey: ['orders'] })
+      void messageApi.success('限价单已取消')
+    },
+    onError: (error) => {
+      void messageApi.error(getErrorMessage(error, '取消挂单失败'))
+    },
+  })
+
+  const reverseMutation = useMutation({
+    mutationFn: async (record: Position) => {
+      const reverseSide = record.side === 'long' ? 'short' : 'long'
+      const testMode = isTestLeveragePosition(record.leverage, currentSymbol?.max_leverage)
+
+      await post<OrderExecution>('/orders', {
+        symbol: record.symbol,
+        side: reverseSide,
+        type: 'market',
+        margin_mode: record.margin_mode,
+        size: record.size,
+        leverage: Number(record.leverage),
+        reduce_only: true,
+        test_mode: testMode,
+        client_order_id: `reverse-close-${record.id}-${Date.now()}`,
+      })
+
+      return (
+        await post<OrderExecution>('/orders', {
+          symbol: record.symbol,
+          side: reverseSide,
+          type: 'market',
+          margin_mode: record.margin_mode,
+          size: record.size,
+          leverage: Number(record.leverage),
+          reduce_only: false,
+          test_mode: testMode,
+          client_order_id: `reverse-open-${record.id}-${Date.now()}`,
+        })
+      ).data!
+    },
+    onSuccess: (result) => {
+      setLatestExecution(result)
+      void queryClient.invalidateQueries({ queryKey: ['trade-account'] })
+      void queryClient.invalidateQueries({ queryKey: ['positions'] })
+      void queryClient.invalidateQueries({ queryKey: ['orders'] })
+      void queryClient.invalidateQueries({ queryKey: ['open-orders'] })
+      void queryClient.invalidateQueries({ queryKey: ['trades'] })
+      void messageApi.success('反手已完成：已先平仓，再开反向新仓')
+    },
+    onError: (error) => {
+      void messageApi.error(getErrorMessage(error, '反手失败'))
+    },
+  })
 
   const submitPartialClose = (record: Position) => {
     const size = partialCloseSizes[record.id]
@@ -382,7 +494,9 @@ export default function TradePage() {
       return
     }
     submitOrder({
+      symbol: record.symbol,
       side: record.side === 'long' ? 'short' : 'long',
+      type: 'market',
       margin_mode: record.margin_mode,
       size,
       leverage: record.leverage,
@@ -422,13 +536,31 @@ export default function TradePage() {
   const selectedLeverage = Number(Form.useWatch('leverage', orderForm) ?? 10)
   const selectedSize = Number(Form.useWatch('size', orderForm) ?? 0)
   const selectedSide = Form.useWatch('side', orderForm) ?? 'long'
+  const selectedOrderType = Form.useWatch('type', orderForm) ?? 'market'
   const selectedMarginMode = Form.useWatch('margin_mode', orderForm) ?? 'isolated'
   const testModeEnabled = Boolean(Form.useWatch('test_mode', orderForm))
+  const selectedReduceOnly = Boolean(Form.useWatch('reduce_only', orderForm))
+  const selectedLimitPrice = Number(Form.useWatch('limit_price', orderForm) ?? 0)
   const leverageMax = testModeEnabled ? 1000 : currentSymbol?.max_leverage ?? 40
-  const estimatedNotional = markPrice * selectedSize
+  const pricingReference =
+    selectedOrderType === 'limit' && Number.isFinite(selectedLimitPrice) && selectedLimitPrice > 0 ? selectedLimitPrice : markPrice
+  const estimatedNotional = pricingReference * selectedSize
   const estimatedMargin = selectedLeverage > 0 ? estimatedNotional / selectedLeverage : 0
   const takerFeeRate = Number(currentSymbol?.taker_fee_rate ?? 0)
   const estimatedFee = estimatedNotional * takerFeeRate
+  const estimatedReserve = selectedOrderType === 'limit' && !selectedReduceOnly ? estimatedMargin + estimatedFee : 0
+  const bestBid = Number(tickerQuery.data?.best_bid ?? 0)
+  const bestAsk = Number(tickerQuery.data?.best_ask ?? 0)
+  const depth = useMemo(
+    () => createDisplayDepth(markPrice, bestBid, bestAsk, Number(currentSymbol?.tick_size ?? 0)),
+    [bestAsk, bestBid, currentSymbol?.tick_size, markPrice],
+  )
+  const limitTriggerHint =
+    selectedOrderType !== 'limit'
+      ? ''
+      : selectedSide === 'long'
+        ? `开多限价单会在卖一价格 <= ${formatAmount(selectedLimitPrice || bestAsk || markPrice, 2)} 时触发。`
+        : `开空限价单会在买一价格 >= ${formatAmount(selectedLimitPrice || bestBid || markPrice, 2)} 时触发。`
 
   useEffect(() => {
     if (selectedLeverage > leverageMax) {
@@ -448,6 +580,10 @@ export default function TradePage() {
     }
     return (openOrdersQuery.data ?? []).filter((item) => item.symbol === openOrderFilterSymbol)
   }, [openOrderFilterSymbol, openOrdersQuery.data])
+  const currentSymbolOpenLimitOrders = useMemo(
+    () => (openOrdersQuery.data ?? []).filter((item) => item.symbol === symbol && item.type === 'limit'),
+    [openOrdersQuery.data, symbol],
+  )
 
   const filteredTrades = useMemo(() => {
     if (tradeFilterSymbol === '__all__') {
@@ -469,6 +605,13 @@ export default function TradePage() {
         .filter((item) => item.is_liquidation && item.symbol === symbol)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0],
     [symbol, tradesQuery.data],
+  )
+  const latestLimitOrder = useMemo(
+    () =>
+      (ordersQuery.data ?? [])
+        .filter((item) => item.symbol === symbol && item.type === 'limit')
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0],
+    [ordersQuery.data, symbol],
   )
 
   const positionColumns = useMemo(
@@ -546,7 +689,9 @@ export default function TradePage() {
               className="rg-action-button"
               onClick={() =>
                 submitOrder({
+                  symbol: record.symbol,
                   side: record.side === 'long' ? 'short' : 'long',
+                  type: 'market',
                   margin_mode: record.margin_mode,
                   size: record.size,
                   leverage: record.leverage,
@@ -563,17 +708,8 @@ export default function TradePage() {
               type="primary"
               ghost
               className="rg-action-button"
-              onClick={() =>
-                submitOrder({
-                  side: record.side === 'long' ? 'short' : 'long',
-                  margin_mode: record.margin_mode,
-                  size: String(Number(record.size) * 2),
-                  leverage: record.leverage,
-                  reduce_only: false,
-                  test_mode: isTestLeveragePosition(record.leverage, currentSymbol?.max_leverage),
-                })
-              }
-              loading={orderMutation.isPending}
+              onClick={() => reverseMutation.mutate(record)}
+              loading={reverseMutation.isPending}
             >
               反手
             </Button>
@@ -581,7 +717,7 @@ export default function TradePage() {
         ),
       },
     ],
-    [currentSymbol?.max_leverage, messageApi, orderMutation.isPending, partialCloseSizes, symbolLabelMap],
+    [currentSymbol?.max_leverage, messageApi, orderMutation.isPending, partialCloseSizes, reverseMutation.isPending, symbolLabelMap],
   )
 
   const tradeColumns = useMemo(
@@ -627,9 +763,11 @@ export default function TradePage() {
         width: 82,
         render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag>,
       },
+      { title: '类型', dataIndex: 'type', key: 'type', width: 82, render: (value: string) => <Tag color={value === 'limit' ? 'purple' : 'cyan'}>{value}</Tag> },
       { title: '模式', dataIndex: 'margin_mode', key: 'margin_mode', width: 92, render: (value: string) => <Tag color={value === 'cross' ? 'purple' : 'gold'}>{value}</Tag> },
       { title: '数量', dataIndex: 'size', key: 'size', width: 84, render: (value: string) => formatAmount(value, 4) },
-      { title: '成交价', dataIndex: 'exec_price', key: 'exec_price', width: 96, render: (value: string) => formatAmount(value, 2) },
+      { title: '限价', dataIndex: 'limit_price', key: 'limit_price', width: 96, render: (value: string) => (Number(value) > 0 ? formatAmount(value, 2) : '--') },
+      { title: '成交价', dataIndex: 'exec_price', key: 'exec_price', width: 96, render: (value: string) => (Number(value) > 0 ? formatAmount(value, 2) : '--') },
       { title: '杠杆', dataIndex: 'leverage', key: 'leverage', width: 72, render: (value: number) => `${value}x` },
       { title: '手续费', dataIndex: 'fee', key: 'fee', width: 94, render: (value: string) => formatAmount(value) },
       {
@@ -646,10 +784,33 @@ export default function TradePage() {
         dataIndex: 'status',
         key: 'status',
         width: 92,
-        render: (value: string) => <Tag color={value === 'filled' ? 'cyan' : 'default'}>{value}</Tag>,
+        render: (value: string) => {
+          const meta = getOrderStatusMeta(value)
+          return <Tag color={meta.color}>{meta.label}</Tag>
+        },
       },
     ],
     [symbolLabelMap],
+  )
+
+  const openOrderColumns = useMemo(
+    () => [
+      ...orderColumns,
+      {
+        title: '操作',
+        key: 'actions',
+        width: 100,
+        render: (_: unknown, record: OrderHistoryItem) =>
+          record.type === 'limit' && record.status === 'open' ? (
+            <Button size="small" onClick={() => cancelOrderMutation.mutate(record.id)} loading={cancelOrderMutation.isPending}>
+              取消
+            </Button>
+          ) : (
+            '--'
+          ),
+      },
+    ],
+    [cancelOrderMutation, orderColumns],
   )
 
   return (
@@ -754,6 +915,73 @@ export default function TradePage() {
                 Updated {tickerQuery.data ? new Date(tickerQuery.data.timestamp * 1000).toLocaleTimeString() : '--'}
               </Typography.Text>
             </Space>
+            <div className="rg-depth-panel">
+              <div className="rg-depth-panel-header">
+                <Space size={8}>
+                  <Typography.Text strong>盘口深度</Typography.Text>
+                  <Tag color="purple">展示型 System Quotes</Tag>
+                </Space>
+              </div>
+              <div className="rg-depth-grid rg-depth-grid--header">
+                <span>价格</span>
+                <span>数量</span>
+                <span>累计名义价值</span>
+              </div>
+              <div className="rg-depth-book">
+                <div className="rg-depth-side">
+                  {depth.asks.map((level) => (
+                    <div
+                      key={`ask-${level.price}`}
+                      className={`rg-depth-row rg-depth-row--ask${
+                        currentSymbolOpenLimitOrders.some(
+                          (order) =>
+                            Math.abs(Number(order.limit_price ?? 0) - level.price) <= Math.max(Number(currentSymbol?.tick_size ?? 0), 0.01),
+                        )
+                          ? ' is-linked'
+                          : ''
+                      }`}
+                    >
+                      <div className="rg-depth-fill" style={{ width: `${(level.total / depth.maxTotal) * 100}%` }} />
+                      <span className="rg-depth-price">{formatAmount(level.price, 2)}</span>
+                      <span>{formatAmount(level.size, 4)}</span>
+                      <span>{formatAmount(level.total, 2)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="rg-depth-mid">
+                  <Typography.Text type="secondary">Mid</Typography.Text>
+                  <Typography.Title level={5} style={{ margin: 0, color: '#e6eef5' }}>
+                    {formatAmount(markPrice, 2)}
+                  </Typography.Title>
+                  <Typography.Text type="secondary">
+                    Spread {formatAmount(Math.max(bestAsk - bestBid, 0), 4)}
+                  </Typography.Text>
+                  {currentSymbolOpenLimitOrders.length ? (
+                    <Typography.Text type="secondary">挂单高亮 {currentSymbolOpenLimitOrders.length} 档</Typography.Text>
+                  ) : null}
+                </div>
+                <div className="rg-depth-side">
+                  {depth.bids.map((level) => (
+                    <div
+                      key={`bid-${level.price}`}
+                      className={`rg-depth-row rg-depth-row--bid${
+                        currentSymbolOpenLimitOrders.some(
+                          (order) =>
+                            Math.abs(Number(order.limit_price ?? 0) - level.price) <= Math.max(Number(currentSymbol?.tick_size ?? 0), 0.01),
+                        )
+                          ? ' is-linked'
+                          : ''
+                      }`}
+                    >
+                      <div className="rg-depth-fill" style={{ width: `${(level.total / depth.maxTotal) * 100}%` }} />
+                      <span className="rg-depth-price">{formatAmount(level.price, 2)}</span>
+                      <span>{formatAmount(level.size, 4)}</span>
+                      <span>{formatAmount(level.total, 2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </Card>
         </Col>
         <Col xs={24} lg={7} style={{ display: 'flex' }}>
@@ -801,9 +1029,12 @@ export default function TradePage() {
                 <Form
                   form={orderForm}
                   layout="vertical"
-                  initialValues={{ side: 'long', margin_mode: 'isolated', leverage: 10, reduce_only: false, test_mode: false }}
+                  initialValues={{ side: 'long', type: 'market', margin_mode: 'isolated', leverage: 10, reduce_only: false, test_mode: false, time_in_force: 'gtc' }}
                   onFinish={(values) => orderMutation.mutate(values)}
                 >
+                  <Form.Item label="订单类型" name="type">
+                    <Segmented block options={[{ label: '市价', value: 'market' }, { label: '限价', value: 'limit' }]} />
+                  </Form.Item>
                   <Form.Item label="方向" name="side">
                     <Segmented
                       block
@@ -826,6 +1057,29 @@ export default function TradePage() {
                       description="已开启测试模式。当前交易对可临时使用最高 1000x 杠杆，仅用于自动清算与强平联调。"
                     />
                   ) : null}
+                  {selectedOrderType === 'limit' ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="限价单会在价格满足条件时触发"
+                      description={
+                        <Space direction="vertical" size={4}>
+                          <Typography.Text>{limitTriggerHint}</Typography.Text>
+                          <Typography.Text type="secondary">第一版为 GTC 条件触发单，不是订单簿撮合挂单。</Typography.Text>
+                        </Space>
+                      }
+                    />
+                  ) : null}
+                  {selectedOrderType === 'limit' && selectedReduceOnly ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="Reduce-only 限价单"
+                      description="该挂单只会在到价时减少现有对侧仓位，不会新增风险敞口，也不会冻结新的开仓保证金。"
+                    />
+                  ) : null}
                   <Form.Item
                     label="数量"
                     name="size"
@@ -833,6 +1087,35 @@ export default function TradePage() {
                   >
                     <Input placeholder="例如 0.001" />
                   </Form.Item>
+                  {selectedOrderType === 'limit' ? (
+                    <>
+                      <Form.Item
+                        label="限价"
+                        name="limit_price"
+                        rules={[{ required: true, message: '请输入限价价格' }]}
+                      >
+                        <Input
+                          placeholder="例如 70000"
+                          addonAfter={
+                            <Space size={4}>
+                              <Button size="small" type="text" onClick={() => orderForm.setFieldValue('limit_price', formatAmount(bestBid || markPrice, 2).replace(/,/g, ''))}>
+                                买一
+                              </Button>
+                              <Button size="small" type="text" onClick={() => orderForm.setFieldValue('limit_price', formatAmount(bestAsk || markPrice, 2).replace(/,/g, ''))}>
+                                卖一
+                              </Button>
+                              <Button size="small" type="text" onClick={() => orderForm.setFieldValue('limit_price', formatAmount(markPrice, 2).replace(/,/g, ''))}>
+                                标记价
+                              </Button>
+                            </Space>
+                          }
+                        />
+                      </Form.Item>
+                      <Form.Item label="有效期" name="time_in_force">
+                        <Segmented block options={[{ label: 'GTC', value: 'gtc' }]} />
+                      </Form.Item>
+                    </>
+                  ) : null}
                   <Form.Item
                     label="杠杆"
                     name="leverage"
@@ -850,13 +1133,19 @@ export default function TradePage() {
                     <Descriptions size="small" column={1}>
                       <Descriptions.Item label="方向">{selectedSide === 'long' ? '做多 Long' : '做空 Short'}</Descriptions.Item>
                       <Descriptions.Item label="模式">{selectedMarginMode === 'cross' ? '全仓 Cross' : '逐仓 Isolated'}</Descriptions.Item>
+                      <Descriptions.Item label="价格参考">
+                        {selectedOrderType === 'limit' ? `${formatAmount(pricingReference, 2)} USDC (限价)` : `${formatAmount(pricingReference, 2)} USDC (标记价)`}
+                      </Descriptions.Item>
                       <Descriptions.Item label="名义价值">{formatAmount(estimatedNotional, 2)} USDC</Descriptions.Item>
                       <Descriptions.Item label="预估开仓保证金">{formatAmount(estimatedMargin)} USDC</Descriptions.Item>
                       <Descriptions.Item label="预估手续费">{formatAmount(estimatedFee)} USDC ({formatAmount(takerFeeRate * 100, 4)}%)</Descriptions.Item>
+                      {selectedOrderType === 'limit' && !selectedReduceOnly ? (
+                        <Descriptions.Item label="挂单冻结预算">{formatAmount(estimatedReserve)} USDC</Descriptions.Item>
+                      ) : null}
                     </Descriptions>
                   </Card>
                   <Button type="primary" htmlType="submit" block loading={orderMutation.isPending}>
-                    市价下单
+                    {selectedOrderType === 'limit' ? '提交限价单' : '市价下单'}
                   </Button>
                 </Form>
 
@@ -869,6 +1158,18 @@ export default function TradePage() {
                       <Descriptions.Item label="可用余额">{formatAmount(latestExecution.account.available_balance)}</Descriptions.Item>
                     </Descriptions>
                   </Card>
+                ) : null}
+                {latestLimitOrder ? (
+                  <Alert
+                    type={getOrderStatusMeta(latestLimitOrder.status).alertType}
+                    showIcon
+                    message={`最近限价单：${getOrderStatusMeta(latestLimitOrder.status).label}`}
+                    description={`${symbolLabelMap.get(latestLimitOrder.symbol) ?? latestLimitOrder.symbol} ${
+                      latestLimitOrder.side === 'long' ? '做多' : '做空'
+                    } ${formatAmount(latestLimitOrder.size, 4)} @ ${formatAmount(latestLimitOrder.limit_price, 2)}${
+                      latestLimitOrder.triggered_at ? `，触发时间 ${new Date(latestLimitOrder.triggered_at).toLocaleString()}` : ''
+                    }${latestLimitOrder.cancel_reason ? `，原因 ${latestLimitOrder.cancel_reason}` : ''}`}
+                  />
                 ) : null}
               </Space>
             )}
@@ -983,10 +1284,10 @@ export default function TradePage() {
                         rowKey="id"
                         loading={openOrdersQuery.isLoading}
                         dataSource={filteredOpenOrders}
-                        columns={orderColumns}
+                        columns={openOrderColumns}
                         pagination={false}
                         locale={{ emptyText: '当前筛选条件下无挂单' }}
-                        scroll={{ x: 1040 }}
+                        scroll={{ x: 1160 }}
                       />
                     </Space>
                   ),

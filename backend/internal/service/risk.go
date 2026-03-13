@@ -13,6 +13,7 @@ type RiskState struct {
 	User                model.User
 	Account             model.Account
 	PendingWithdrawal   decimal.Decimal
+	OpenOrderReserved   decimal.Decimal
 	AvailableBalance    decimal.Decimal
 	LockedBalance       decimal.Decimal
 	UnrealizedPnL       decimal.Decimal
@@ -37,6 +38,10 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	}
 
 	pending, err := pendingWithdrawalAmount(db, userID)
+	if err != nil {
+		return nil, err
+	}
+	openOrderReserved, err := pendingOpenOrderReserved(db, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -72,13 +77,13 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	}
 
 	equity := account.AvailableBalance.Add(account.LockedBalance).Add(unrealized).Round(18)
-	freeCollateral := equity.Sub(totalInitial).Sub(pending)
+	freeCollateral := equity.Sub(totalInitial).Sub(pending).Sub(openOrderReserved)
 	marginRatio := decimal.Zero
 	if equity.GreaterThan(decimal.Zero) {
 		marginRatio = totalMaintenance.Div(equity).Mul(decimal.NewFromInt(100)).Round(6)
 	}
 
-	riskBuffer := equity.Sub(totalMaintenance).Sub(pending)
+	riskBuffer := equity.Sub(totalMaintenance).Sub(pending).Sub(openOrderReserved)
 	maxWithdrawByAvailable := account.AvailableBalance.Sub(pending)
 	withdrawable := decimal.Min(maxWithdrawByAvailable, riskBuffer)
 	if withdrawable.IsNegative() {
@@ -101,6 +106,7 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		User:                user,
 		Account:             account,
 		PendingWithdrawal:   pending,
+		OpenOrderReserved:   openOrderReserved.Round(18),
 		AvailableBalance:    account.AvailableBalance,
 		LockedBalance:       account.LockedBalance,
 		UnrealizedPnL:       unrealized.Round(18),
@@ -112,6 +118,25 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		MarginRatio:         marginRatio,
 		RiskLevel:           riskLevel,
 	}, nil
+}
+
+func pendingOpenOrderReserved(db *gorm.DB, userID uint64) (decimal.Decimal, error) {
+	var orders []model.Order
+	if err := db.Where(
+		"user_id = ? AND type = ? AND parent_order_id IS NULL AND reduce_only = ? AND status IN ?",
+		userID,
+		"limit",
+		false,
+		[]string{"open", "triggered"},
+	).Find(&orders).Error; err != nil {
+		return decimal.Zero, err
+	}
+
+	total := decimal.Zero
+	for _, order := range orders {
+		total = total.Add(order.Margin).Add(order.Fee)
+	}
+	return total, nil
 }
 
 func syncUserRiskStatus(db *gorm.DB, userID uint64) (*RiskState, error) {

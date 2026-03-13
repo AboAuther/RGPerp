@@ -49,7 +49,7 @@ type HyperliquidAdapter struct {
 	bridgePath    string
 }
 
-func NewAdapter(cfg *config.Config) Adapter {
+func NewAdapter(cfg *config.Config) (Adapter, error) {
 	if useHyperliquidAdapter(cfg) {
 		return &HyperliquidAdapter{
 			apiURL:        strings.TrimRight(cfg.Hyperliquid.APIURL, "/"),
@@ -59,9 +59,9 @@ func NewAdapter(cfg *config.Config) Adapter {
 				Timeout: 10 * time.Second,
 			},
 			bridgePath: "scripts/hyperliquid_bridge.py",
-		}
+		}, nil
 	}
-	return &MockAdapter{positions: make(map[string]decimal.Decimal)}
+	return nil, fmt.Errorf("hyperliquid adapter requires HYPERLIQUID_API_URL, HYPERLIQUID_WALLET_ADDRESS, and HYPERLIQUID_PRIVATE_KEY")
 }
 
 func (a *MockAdapter) PlaceOrder(_ context.Context, req OrderRequest) (*OrderResult, error) {

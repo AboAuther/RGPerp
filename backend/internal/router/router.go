@@ -52,6 +52,7 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authenticated.POST("/withdrawals", withdrawalH.Create)
 	authenticated.GET("/withdrawals", withdrawalH.List)
 	authenticated.POST("/orders", orderH.Create)
+	authenticated.POST("/orders/:id/cancel", orderH.Cancel)
 	authenticated.GET("/orders", orderH.ListOrders)
 	authenticated.GET("/open-orders", orderH.ListOpenOrders)
 	authenticated.GET("/trades", orderH.ListTrades)

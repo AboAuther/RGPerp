@@ -88,7 +88,7 @@ func TestOrderService_CrossMarginAndMockHedge(t *testing.T) {
 	if err := db.Where("hedge_task_id = ?", hedgeTask.ID).First(&hedgeOrder).Error; err != nil {
 		t.Fatalf("load hedge order: %v", err)
 	}
-	if hedgeOrder.Status != "mock_pending" {
+	if hedgeOrder.Status != "pending" {
 		t.Fatalf("unexpected hedge order status: %s", hedgeOrder.Status)
 	}
 }
@@ -178,6 +178,184 @@ func TestOrderService_HighLeverageRejectedWithoutTestMode(t *testing.T) {
 	}
 }
 
+func TestOrderService_OppositeSideOrderCreatesSeparatePosition(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "open-long",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("open long failed: %v", err)
+	}
+
+	result, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "open-short-separately",
+		Symbol:        "BTC-PERP",
+		Side:          "short",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	})
+	if err != nil {
+		t.Fatalf("expected opposite-side order to open independently, got %v", err)
+	}
+	if result.Position == nil || result.Position.Side != "short" {
+		t.Fatalf("expected short position output, got %#v", result.Position)
+	}
+
+	var positions []model.Position
+	if err := db.Where("user_id = ? AND symbol = ? AND status = ?", 1, "BTC-PERP", "open").Order("id asc").Find(&positions).Error; err != nil {
+		t.Fatalf("load positions failed: %v", err)
+	}
+	if len(positions) != 2 {
+		t.Fatalf("expected 2 open positions, got %d", len(positions))
+	}
+	if positions[0].Side != "long" || positions[1].Side != "short" {
+		t.Fatalf("expected long + short positions, got %#v", positions)
+	}
+}
+
+func TestOrderService_ReduceOnlyMustUseOppositeSide(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "open-long",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("open long failed: %v", err)
+	}
+
+	_, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "same-side-reduce-only",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+		ReduceOnly:    true,
+	})
+	if err == nil {
+		t.Fatal("expected same-side reduce-only to be rejected")
+	}
+	if err != apperr.ErrNoOpenPosition {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestOrderService_ReduceOnlyCannotExceedOppositeSidePosition(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "open-long",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("open long failed: %v", err)
+	}
+
+	_, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "oversized-reduce-only",
+		Symbol:        "BTC-PERP",
+		Side:          "short",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.002"),
+		Leverage:      10,
+		ReduceOnly:    true,
+	})
+	if err == nil {
+		t.Fatal("expected oversized reduce-only order to be rejected")
+	}
+	if err != apperr.ErrOppositePositionMode {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestOrderService_ReduceOnlyClosesOppositeSideWhenBothDirectionsExist(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "open-long",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("open long failed: %v", err)
+	}
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "open-short",
+		Symbol:        "BTC-PERP",
+		Side:          "short",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+	}); err != nil {
+		t.Fatalf("open short failed: %v", err)
+	}
+
+	result, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "close-long-via-short-reduce",
+		Symbol:        "BTC-PERP",
+		Side:          "short",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      10,
+		ReduceOnly:    true,
+	})
+	if err != nil {
+		t.Fatalf("reduce-only close failed: %v", err)
+	}
+	if result.Position != nil && result.Position.Side != "long" {
+		t.Fatalf("expected closed target to be long or nil output, got %#v", result.Position)
+	}
+
+	var positions []model.Position
+	if err := db.Where("user_id = ? AND symbol = ? AND status = ?", 1, "BTC-PERP", "open").Order("id asc").Find(&positions).Error; err != nil {
+		t.Fatalf("load positions failed: %v", err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("expected 1 open position after closing long, got %d", len(positions))
+	}
+	if positions[0].Side != "short" {
+		t.Fatalf("expected remaining short position, got %#v", positions[0])
+	}
+}
+
 func TestEffectiveMaintenanceRate_NormalLeverageUnchanged(t *testing.T) {
 	initialRate := decimal.RequireFromString("0.04")
 	maintenanceRate := decimal.RequireFromString("0.01")
@@ -259,6 +437,81 @@ func TestOrderService_CreateHedgeTaskUsesLatestTargetWhenSnapshotLags(t *testing
 	}
 	if !task.Drift.Equal(decimal.RequireFromString("-0.001")) {
 		t.Fatalf("unexpected drift: %s", task.Drift.String())
+	}
+}
+
+func TestOrderService_CreateHedgeTaskSupersedesOlderBufferedTask(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	oldTask := model.HedgeTask{
+		Symbol:               "SOL-PERP",
+		TriggerType:          "trade",
+		InternalNetPosition:  decimal.RequireFromString("0.1"),
+		TargetHedgePosition:  decimal.RequireFromString("0.1"),
+		CurrentHedgePosition: decimal.Zero,
+		Drift:                decimal.RequireFromString("0.1"),
+		Status:               "buffered",
+		ErrorMessage:         "buffered until hedge notional reaches 10 USDC",
+	}
+	if err := db.Create(&oldTask).Error; err != nil {
+		t.Fatalf("create old task: %v", err)
+	}
+	oldOrder := model.HedgeOrder{
+		HedgeTaskID: oldTask.ID,
+		Symbol:      "SOL-PERP",
+		Side:        "long",
+		Size:        decimal.RequireFromString("0.1"),
+		Price:       decimal.RequireFromString("89"),
+		Status:      "buffered",
+	}
+	if err := db.Create(&oldOrder).Error; err != nil {
+		t.Fatalf("create old order: %v", err)
+	}
+	if err := db.Create(&model.PriceTick{
+		Symbol:     "SOL-PERP",
+		IndexPrice: decimal.RequireFromString("100"),
+		MarkPrice:  decimal.RequireFromString("100"),
+		BestBid:    decimal.RequireFromString("99.9"),
+		BestAsk:    decimal.RequireFromString("100.1"),
+		Source:     "mock",
+	}).Error; err != nil {
+		t.Fatalf("create tick: %v", err)
+	}
+	if err := db.Create(&model.Position{
+		UserID:           1,
+		Symbol:           "SOL-PERP",
+		Side:             "long",
+		MarginMode:       "isolated",
+		Size:             decimal.RequireFromString("0.2"),
+		EntryPrice:       decimal.RequireFromString("100"),
+		MarkPrice:        decimal.RequireFromString("100"),
+		LiquidationPrice: decimal.Zero,
+		Margin:           decimal.RequireFromString("1"),
+		Leverage:         10,
+		Status:           "open",
+	}).Error; err != nil {
+		t.Fatalf("create position: %v", err)
+	}
+
+	if err := svc.createMockHedgeTask(db, "SOL-PERP", "trade", decimal.RequireFromString("100")); err != nil {
+		t.Fatalf("create new hedge task: %v", err)
+	}
+
+	var reloadedTask model.HedgeTask
+	if err := db.First(&reloadedTask, oldTask.ID).Error; err != nil {
+		t.Fatalf("reload old task: %v", err)
+	}
+	if reloadedTask.Status != "superseded" {
+		t.Fatalf("expected old task to be superseded, got %s", reloadedTask.Status)
+	}
+
+	var reloadedOrder model.HedgeOrder
+	if err := db.First(&reloadedOrder, oldOrder.ID).Error; err != nil {
+		t.Fatalf("reload old order: %v", err)
+	}
+	if reloadedOrder.Status != "superseded" {
+		t.Fatalf("expected old order to be superseded, got %s", reloadedOrder.Status)
 	}
 }
 

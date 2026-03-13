@@ -27,6 +27,8 @@ type createOrderRequest struct {
 	Type          string `json:"type" binding:"required"`
 	MarginMode    string `json:"margin_mode"`
 	Size          string `json:"size" binding:"required"`
+	LimitPrice    string `json:"limit_price"`
+	TimeInForce   string `json:"time_in_force"`
 	Leverage      uint32 `json:"leverage" binding:"required"`
 	Margin        string `json:"margin"`
 	ReduceOnly    bool   `json:"reduce_only"`
@@ -61,6 +63,15 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		}
 	}
 
+	limitPrice := decimal.Zero
+	if req.LimitPrice != "" {
+		limitPrice, err = decimal.NewFromString(req.LimitPrice)
+		if err != nil {
+			response.FailWithMsg(c, http.StatusBadRequest, 90002, "invalid limit price")
+			return
+		}
+	}
+
 	result, err := h.orderService.Create(service.CreateOrderInput{
 		UserID:        userIDValue.(uint64),
 		ClientOrderID: req.ClientOrderID,
@@ -69,6 +80,8 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		Type:          req.Type,
 		MarginMode:    req.MarginMode,
 		Size:          size,
+		LimitPrice:    limitPrice,
+		TimeInForce:   req.TimeInForce,
 		Leverage:      req.Leverage,
 		Margin:        margin,
 		ReduceOnly:    req.ReduceOnly,
@@ -79,6 +92,27 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		return
 	}
 	response.OK(c, result)
+}
+
+func (h *OrderHandler) Cancel(c *gin.Context) {
+	userIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.FailWithMsg(c, http.StatusUnauthorized, 10004, "unauthorized")
+		return
+	}
+
+	orderID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		response.FailWithMsg(c, http.StatusBadRequest, 90002, "invalid order id")
+		return
+	}
+
+	item, err := h.orderService.CancelOrder(userIDValue.(uint64), orderID)
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, item)
 }
 
 func (h *OrderHandler) ListPositions(c *gin.Context) {
