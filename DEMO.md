@@ -69,10 +69,10 @@ cd frontend && pnpm install && pnpm dev
 - 点击后跳转至 `/app` 交易页或登录流程
 
 <!-- 图4：Landing Page 首页 -->
-![图4：Landing Page 首页](./docs/demo_images/step-01-landing.png)
+<img src="./docs/demo_images/step-01-landing.png" alt="图4：Landing Page 首页" width="960" height="540" />
 
 <!-- 图5：Launch App 按钮与跳转 -->
-![图5：Launch App 按钮与跳转](./docs/demo_images/step-01-launch-app.png)
+<img src="./docs/demo_images/step-01-launch-app.png" alt="图5：Launch App 按钮与跳转" width="960" height="540" />
 
 ---
 
@@ -99,13 +99,13 @@ cd frontend && pnpm install && pnpm dev
 - 登录后进入交易页，顶部显示已连接地址
 
 <!-- 图6：Connect Wallet 按钮 -->
-![图6：Connect Wallet 按钮](./docs/demo_images/step-02-connect-wallet.png)
+<img src="./docs/demo_images/step-02-connect-wallet.png" alt="图6：Connect Wallet 按钮" width="960" height="540" />
 
 <!-- 图7：签名挑战与签名确认 -->
-![图7：签名挑战与签名确认](./docs/demo_images/step-02-sign-challenge.png)
+<img src="./docs/demo_images/step-02-sign-challenge.png" alt="图7：签名挑战与签名确认" width="960" height="540" />
 
 <!-- 图8：登录成功进入交易页 -->
-![图8：登录成功进入交易页](./docs/demo_images/step-02-logged-in.png)
+<img src="./docs/demo_images/step-02-logged-in.png" alt="图8：登录成功进入交易页" width="960" height="540" />
 
 ---
 
@@ -132,13 +132,13 @@ cd frontend && pnpm install && pnpm dev
 - 几秒内账户余额刷新，`available_balance` 增加对应金额
 
 <!-- 图9：充值入口与金额输入 -->
-![图9：充值入口与金额输入](./docs/demo_images/step-03-deposit-modal.png)
+<img src="./docs/demo_images/step-03-deposit-modal.png" alt="图9：充值入口与金额输入" width="960" height="540" />
 
 <!-- 图10：MetaMask 确认充值交易 -->
-![图10：MetaMask 确认充值交易](./docs/demo_images/step-03-metamask-deposit.png)
+<img src="./docs/demo_images/step-03-metamask-deposit.png" alt="图10：MetaMask 确认充值交易" width="960" height="540" />
 
 <!-- 图11：充值后余额更新 -->
-![图11：充值后余额更新](./docs/demo_images/step-03-balance-updated.png)
+<img src="./docs/demo_images/step-03-balance-updated.png" alt="图11：充值后余额更新" width="960" height="540" />
 
 ---
 
@@ -167,16 +167,16 @@ cd frontend && pnpm install && pnpm dev
 - 若配置对冲，Hedger 异步处理 hedge task
 
 <!-- 图12：下单面板与参数设置 -->
-![图12：下单面板与参数设置](./docs/demo_images/step-04-order-panel.png)
+<img src="./docs/demo_images/step-04-order-panel.png" alt="图12：下单面板与参数设置" width="960" height="540" />
 
 <!-- 图13：下单成功与仓位展示 -->
-![图13：下单成功与仓位展示](./docs/demo_images/step-04-position-created.png)
+<img src="./docs/demo_images/step-04-position-created.png" alt="图13：下单成功与仓位展示" width="960" height="540" />
 
 <!-- 图14：账户余额与锁定保证金变化 -->
-![图14：账户余额与锁定保证金变化](./docs/demo_images/step-04-balance-locked.png)
+<img src="./docs/demo_images/step-04-balance-locked.png" alt="图14：账户余额与锁定保证金变化" width="960" height="540" />
 
 <!-- 图15：对冲 -->
-![图15：对冲](./docs/demo_images/step-04-hedger.png)
+<img src="./docs/demo_images/step-04-hedger.png" alt="图15：对冲" width="960" height="540" />
 
 ---
 
@@ -203,7 +203,7 @@ cd frontend && pnpm install && pnpm dev
 - 风险等级随市场变化更新
 
 <!-- 图16：仓位列表与 PnL -->
-![图16：仓位列表与 PnL](./docs/demo_images/step-05-positions.png)
+<img src="./docs/demo_images/step-05-positions.png" alt="图16：仓位列表与 PnL" width="960" height="540" />
 
 ---
 
@@ -224,10 +224,10 @@ cd frontend && pnpm install && pnpm dev
 - 若全平，仓位从列表移除
 
 <!-- 图17：平仓入口与数量输入 -->
-![图17：平仓入口与数量输入](./docs/demo_images/step-06-close-modal.png)
+<img src="./docs/demo_images/step-06-close-modal.png" alt="图17：平仓入口与数量输入" width="960" height="540" />
 
 <!-- 图18：平仓后仓位与余额变化 -->
-![图18：平仓后仓位与余额变化](./docs/demo_images/step-06-after-close.png)
+<img src="./docs/demo_images/step-06-after-close.png" alt="图18：平仓后仓位与余额变化" width="960" height="540" />
 
 ---
 
@@ -256,16 +256,16 @@ cd frontend && pnpm install && pnpm dev
 - 钱包 USDC 余额增加
 
 <!-- 图19：提现入口与金额输入 -->
-![图19：提现入口与金额输入](./docs/demo_images/step-07-withdraw-modal.png)
+<img src="./docs/demo_images/step-07-withdraw-modal.png" alt="图19：提现入口与金额输入" width="960" height="540" />
 
 <!-- 图23：提现授权 -->
-![图23：提现授权](./docs/demo_images/step-07-withdraw-auth.png)
+<img src="./docs/demo_images/step-07-withdraw-auth.png" alt="图23：提现授权" width="960" height="540" />
 
 <!-- 图20：提现签名与链上确认 -->
-![图20：提现签名与链上确认](./docs/demo_images/step-07-withdraw-confirm.png)
+<img src="./docs/demo_images/step-07-withdraw-confirm.png" alt="图20：提现签名与链上确认" width="960" height="540" />
 
 <!-- 图21：提现成功后余额变化 -->
-![图21：提现成功后余额变化](./docs/demo_images/step-07-withdraw-success.png)
+<img src="./docs/demo_images/step-07-withdraw-success.png" alt="图21：提现成功后余额变化" width="960" height="540" />
 
 ---
 
@@ -294,20 +294,141 @@ cd frontend && pnpm install && pnpm dev
 
 
 <!-- 图22：清算前风险状态 -->
-![图22：清算前风险状态](./docs/demo_images/step-08-pre-liquidation.png)
+<img src="./docs/demo_images/step-08-pre-liquidation.png" alt="图22：清算前风险状态" width="960" height="540" />
 
 <!-- 图23：清算执行与清算记录 -->
-![图23：清算执行与清算记录](./docs/demo_images/step-08-liquidation-record.png)
+<img src="./docs/demo_images/step-08-liquidation-record.png" alt="图23：清算执行与清算记录" width="960" height="540" />
 
 <!-- 图23：清算执行与清算记录 -->
-![图23：清算执行与清算记录](./docs/demo_images/step-08-liquidation-trade.png)
+<img src="./docs/demo_images/step-08-liquidation-trade.png" alt="图24：清算成交记录" width="960" height="540" />
 
 <!-- 图23：清算执行与清算记录 -->
-![图23：清算执行与清算记录](./docs/demo_images/step-08-liquidation-admin.png)
+<img src="./docs/demo_images/step-08-liquidation-admin.png" alt="图25：Admin 中的清算与风险告警" width="960" height="540" />
 
 ---
 
-## 十一、附录：演示账户
+## 十一、限价单流程演示
+
+### 操作
+
+1. 在交易页将订单类型切换为 **Limit**
+2. 选择交易对、方向、杠杆与保证金模式
+3. 输入限价价格与数量
+4. 提交限价单，确认挂单进入 **Open Orders**
+5. 等待价格触发，观察挂单状态从 `open` 进入 `triggered / filled`
+6. 查看账户冻结保证金与仓位变化
+
+### 技术说明
+
+- 当前限价单采用 **CFD 条件触发模型**，不是订单簿撮合
+- 下单时会冻结开仓保证金与手续费预算
+- `matcher` 后台进程监听价格，到价后调用现有成交链路执行真实订单
+- `reduce-only limit` 不额外冻结新的开仓保证金
+
+### 预期
+
+- 限价单创建后出现在 **Open Orders**
+- 对应深度面板会高亮接近的挂单价位
+- 到价后挂单消失并生成真实成交
+- 若取消挂单，冻结保证金释放
+
+<!-- 图26：限价单创建 -->
+<img src="./docs/demo_images/step-09-limit-order-create-01.png" alt="图26：限价单创建" width="540" height="960" />
+
+<!-- 图26：限价单创建 -->
+<img src="./docs/demo_images/step-09-limit-order-create-02.png" alt="图26：限价单创建" width="540" height="960" />
+
+<!-- 图27：Open Orders 与深度联动 -->
+<img src="./docs/demo_images/step-09-open-orders-depth.png" alt="图27：Open Orders 与深度联动" width="960" height="540" />
+
+<!-- 图28：限价单触发成交 -->
+<img src="./docs/demo_images/step-09-limit-order-filled.png" alt="图28：限价单触发成交" width="960" height="270" />
+
+---
+
+## 十二、Admin 管理页演示
+
+### 操作
+
+1. 使用管理员白名单钱包登录系统
+2. 打开 **管理** 页面
+3. 查看系统概览卡片：
+   - 交易中市场
+   - 风险账户
+   - 对冲任务
+   - 各交易对净敞口偏差
+4. 查看风险告警、对冲任务列表、风险快照、清算记录
+5. 对失败的对冲任务点击 **重试**
+
+### 技术说明
+
+- 管理页权限由前端管理员白名单与后端 `/api/v1/admin/*` 中间件双重控制
+- 对冲任务列表显示最近完整任务历史，不再只显示单条
+- 对冲失败后支持自动重试 3 次；仍失败时支持手动重试
+- 风险快照按交易对分开展示内部净仓、外部对冲与偏差
+
+### 预期
+
+- 非管理员看不到管理入口
+- 管理员可查看对冲、清算、风控全链路状态
+- 手动重试后任务状态刷新
+
+<!-- 图29：Admin 总览 -->
+<img src="./docs/demo_images/step-10-admin-overview.png" alt="图29：Admin 总览" width="960" height="540" />
+
+<!-- 图29：Admin 总览 -->
+<img src="./docs/demo_images/step-10-admin-overview-1.png" alt="图29：Admin 总览" width="960" height="540" />
+
+<!-- 图30：对冲任务与重试 -->
+<img src="./docs/demo_images/step-10-admin-hedge-tasks.png" alt="图30：对冲任务与重试" width="960" height="540" />
+
+<!-- 图31：风险快照与清算记录 -->
+<img src="./docs/demo_images/step-10-admin-risk-liquidation.png" alt="图31：风险快照与清算记录" width="960" height="540" />
+
+---
+
+## 十三、资金费率与系统亮点演示
+
+### 操作
+
+1. 在交易页顶部查看 `Funding / Countdown`
+2. 持有仓位跨过一个 funding 结算点
+3. 前往资产页查看 **资金费率记录**
+4. 在账户页查看：
+   - 链上净入金
+   - 已结算盈利
+   - 待结算盈利
+   - 可兑付额度
+
+### 技术说明
+
+- `fundingd` 定时按 `price_ticks.funding_rate / funding_next_at` 结算 open positions
+- 结算结果写入：
+   - `funding_events`
+   - `ledger_entries(type='funding')`
+- 盈利提现采用两层口径：
+   - 交易权益
+   - 可兑付余额
+- Admin/账户页会同时展示风险状态与 settlement-backed 提现能力
+
+### 亮点总结
+
+- **链上托管 + 链下撮合/风控/清算**
+- **真实 Hyperliquid Testnet 对冲**
+- **自动清算 + 强平反向对冲**
+- **限价单 matcher**
+- **资金费率结算**
+- **Docker Compose 一键启动多进程**
+
+<!-- 图32：资金费率与倒计时 -->
+<img src="./docs/demo_images/step-11-funding-countdown.png" alt="图32：资金费率与倒计时" width="960" height="440" />
+
+<!-- 图33：资金费率记录 -->
+<img src="./docs/demo_images/step-11-funding-history.png" alt="图33：资金费率记录" width="960" height="440" />
+
+---
+
+## 十四、附录：演示账户
 
 重置脚本会预置以下账户（以 `.local/demo_accounts.md` 为准）：
 
@@ -320,7 +441,7 @@ cd frontend && pnpm install && pnpm dev
 
 ---
 
-## 十二、图片目录说明
+## 十五、图片目录说明
 
 截图请按以下路径存放，便于文档引用：
 
@@ -350,6 +471,16 @@ docs/
     step-07-withdraw-success.png# 提现成功
     step-08-pre-liquidation.png  # 清算前（可选）
     step-08-liquidation-record.png # 清算记录（可选）
+    step-08-liquidation-trade.png # 清算成交（可选）
+    step-08-liquidation-admin.png # Admin 清算视图（可选）
+    step-09-limit-order-create.png # 限价单创建
+    step-09-open-orders-depth.png # Open Orders 与深度联动
+    step-09-limit-order-filled.png # 限价单触发成交
+    step-10-admin-overview.png # Admin 总览
+    step-10-admin-hedge-tasks.png # 对冲任务与重试
+    step-10-admin-risk-liquidation.png # 风险快照与清算记录
+    step-11-funding-countdown.png # 资金费率与倒计时
+    step-11-funding-history.png # 资金费率记录
 ```
 
 ---

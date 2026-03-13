@@ -2,14 +2,12 @@
 
 ## 1. 系统概述
 
-RGPerp 采用链上资金托管、链下账户与交易、外部流动性对冲的三层架构。
+RGPerp 是一套链上资金托管、链下交易执行、链下风控与清算、外部净敞口对冲的永续合约交易系统。系统围绕以下原则构建：
 
-核心原则：
-
-- 用户资产由链上 Vault 合约托管，出入金以链上事件为结算依据
-- 交易执行、仓位管理、风控与清算在链下完成
-- 平台净风险敞口通过对冲层统一处理，当前以 mock hedger 演示，后续切换 Hyperliquid Testnet
-- 所有模块按多 symbol 设计，当前已支持 `BTC/USDC`、`ETH/USDC`、`SOL/USDC`
+- 用户资产由链上 Vault 合约托管
+- 链下负责订单执行、仓位管理、PnL、风险状态、清算和资金费率结算
+- 外部风险敞口通过 Hyperliquid Testnet 统一对冲
+- 所有核心模块按多交易对设计，当前支持 `BTC/USDC`、`ETH/USDC`、`SOL/USDC`
 
 ## 2. 顶层架构
 
@@ -17,285 +15,203 @@ RGPerp 采用链上资金托管、链下账户与交易、外部流动性对冲�
 flowchart TD
     subgraph Client
         U[User Wallet]
-        FE[Frontend]
+        FE[Frontend SPA]
     end
 
     subgraph Exchange
         API[Backend API]
-        AUTH[Auth Service]
+        AUTH[Auth]
         ACC[Account Service]
         ORD[Order Service]
-        POS[Position Service]
-        ENG[Trade Engine]
         RISK[Risk Engine]
-        LIQ[Liquidation Service]
-        PRICE[Price Service]
-        HEDGE[Hedging Bot]
+        MATCHER[Limit Matcher]
+        LIQ[Liquidator]
+        HEDGE[Hedger]
+        FUND[Funding Worker]
         IDX[Blockchain Indexer]
-        WD[Withdrawal Orchestrator]
-        AUDIT[Audit / Ledger]
-        MQ[[RabbitMQ]]
+        LEDGER[Ledger]
         DB[(MySQL)]
         REDIS[(Redis)]
+        MQ[[RabbitMQ]]
     end
 
     subgraph Chain
-        VAULT[Vault Contract]
-        USDC[USDC]
+        VAULT[Vault]
+        USDC[MockUSDC]
     end
 
     subgraph External
         HL[Hyperliquid Testnet]
-        ORACLE[Oracle / Binance Price Sources]
+        BINANCE[Binance Premium Index]
     end
 
     U --> FE
-    FE --> AUTH
     FE --> API
     FE --> VAULT
 
-    AUTH --> DB
+    API --> AUTH
     API --> ACC
     API --> ORD
-    API --> POS
+    API --> RISK
+    API --> DB
+    API --> REDIS
 
-    ORD --> ENG
-    ENG --> RISK
-    ENG --> PRICE
-    ENG --> DB
-    ENG --> AUDIT
-    ENG --> MQ
+    ORD --> MQ
+    ORD --> LEDGER
+    ORD --> DB
 
+    VAULT --> IDX
+    IDX --> DB
+    IDX --> LEDGER
+
+    MQ --> MATCHER
     MQ --> HEDGE
     MQ --> LIQ
 
-    RISK --> DB
-    RISK --> MQ
-    LIQ --> ENG
-
-    VAULT --> IDX
-    IDX --> MQ
-    MQ --> ACC
-    IDX --> AUDIT
-    IDX --> DB
-
-    WD --> VAULT
-    WD --> ACC
-    WD --> RISK
+    FUND --> BINANCE
+    FUND --> DB
+    FUND --> LEDGER
 
     HEDGE --> HL
     HEDGE --> DB
 
-    PRICE --> HL
-    PRICE --> ORACLE
+    RISK --> DB
+    RISK --> MQ
 ```
 
 ## 3. 模块划分
 
 ### 3.1 Frontend
 
+前端提供以下能力：
+
 - 钱包连接与签名登录
-- K 线与行情展示
-- 下单面板（市价单、杠杆、逐仓 / 全仓、部分平仓）
-- 余额、仓位、PnL、风险率展示
-- 充值、提现、订单历史、对冲状态可视化
+- 交易终端、图表与盘口展示
+- 市价单 / 限价单下单
+- 仓位、挂单、成交、订单历史
+- 账户资产、充值、提现、资金费率记录
+- 管理页：风险快照、对冲任务、清算记录、系统告警
 
-页面：登录页、交易页、资产页、历史页、管理监控页。
+### 3.2 Auth
 
-### 3.2 Auth Service
-
-- 生成一次性 nonce / challenge
+- 生成 challenge message
 - 校验 EIP-191 签名
-- 管理 JWT session
-- challenge 包含 `nonce + domain + chainId + timestamp`，防重放
+- 签发 JWT
+- 维护登录会话
 
 ### 3.3 Account Service
 
-- 管理 `available_balance`、`locked_balance`
-- 汇总 realized / unrealized PnL，计算 equity
-- 提供账户视图给前端
+- 管理账户余额与锁仓
+- 输出账户权益和风控视图
+- 维护交易权益与兑付口径
 
 ### 3.4 Vault Contract
 
-接口：
+Vault 提供：
 
 - `deposit(uint256 amount)`
-- `withdraw(address user, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)`
-- `setOperator(address operator, bool allowed)`
+- `withdraw(...)`
+- operator 授权提现
 
-事件：
+链上事件：
 
-- `Deposit(address indexed user, uint256 amount)`
-- `Withdraw(address indexed user, uint256 amount)`
-
-提现由后端 operator 签名授权，合约校验签名与 nonce 后执行。
+- `Deposit`
+- `Withdraw`
 
 ### 3.5 Blockchain Indexer
 
-- 监听 Vault 的 Deposit / Withdraw 事件
-- 以 `tx_hash + log_index` 做幂等去重
-- 将链上事件映射为内部账本变更
-- 处理链重组与重复消费
+- 监听 Vault 事件
+- 幂等写入 `vault_events`
+- 更新链下账户与账本
 
-### 3.6 Order Service
+### 3.6 Order Service / Trade Engine
 
-- 接收订单请求，校验参数
-- 将合法请求送入交易引擎
+交易引擎负责：
 
-订单字段：`symbol`、`side`、`size`、`margin`、`leverage`、`client_order_id`、`reduce_only`。
+- 参数校验
+- 获取价格
+- 交易前风控
+- 保证金冻结与释放
+- 仓位开仓 / 加仓 / 减仓 / 平仓
+- 已实现盈亏、手续费与账本写入
+- 生成对冲任务
 
-### 3.7 Trade Engine
+### 3.7 Risk Engine
 
-采用 CFD 模式，用户订单与平台资金池即时成交。
+风险引擎负责：
 
-执行流程：
+- 初始保证金、维持保证金、账户权益、风险率计算
+- `normal / at_risk / reduce_only / liquidating / frozen` 状态推进
+- 提现前风险校验
+- 兑付能力与提现上限计算
 
-1. 获取最新 mark price
-2. 调用 Risk Engine 做交易前风控
-3. 扣减或释放保证金
-4. 更新仓位（开仓 / 加仓 / 减仓 / 反手 / 平仓）
-5. 计算手续费、均价、已实现盈亏
-6. 写审计流水
-7. 生成 hedge task，并由 Hedger 异步处理
+### 3.8 Limit Matcher
 
-### 3.8 Risk Engine
+限价单采用条件触发模型：
 
-交易前校验：
+- 用户提交挂单
+- 后台 matcher 监听价格
+- 到价后复用现有成交链路执行
 
-- 用户状态、symbol 状态
-- size ≥ 最小下单量
-- leverage ≤ symbol 最大杠杆
-- available balance 足够覆盖初始保证金
-- 下单后仓位未超过用户上限
-- 下单后交易所净敞口未超过全局上限
-- 价格源在有效时间窗口内
+### 3.9 Hedger
 
-持仓监控：
+Hedger 根据系统内部净敞口执行外部对冲：
 
-- 实时计算 equity、maintenance margin、margin ratio
-- 对冲偏差、价格源健康度
+- 生成 hedge task / hedge order
+- 自动重试 3 次
+- 管理页支持手动重试
+- 风险快照持续记录内部净仓、外部仓位和偏差
 
-风险状态分级：`NORMAL` → `AT_RISK` → `REDUCE_ONLY` → `LIQUIDATING` → `FROZEN`
+### 3.10 Liquidator
 
-### 3.9 Liquidation Service
+Liquidator 持续扫描风险仓位：
 
-- 持续扫描风险账户
-- 当 equity ≤ maintenance margin 时触发清算
-- 支持部分清算（分档 25% / 50% / 100%）
-- 清算后自动触发 hedge rebalance
-- 记录清算价格、手续费、剩余权益
-- 坏账由保险基金吸收
+- 触发隔离仓位和全仓账户的强平
+- 写入清算记录
+- 生成反向对冲任务
 
-清算流程：
+### 3.11 Funding Worker
 
-```mermaid
-flowchart TD
-    A[价格更新] --> B[重算风险账户]
-    B --> C{equity ≤ maintenance margin?}
-    C -- 否 --> D[继续监控]
-    C -- 是 --> E[标记 LIQUIDATING]
-    E --> F[冻结新下单与提现]
-    F --> G[执行部分减仓]
-    G --> H{风险恢复?}
-    H -- 是 --> I[恢复 NORMAL / AT_RISK]
-    H -- 否 --> J[执行全量强平]
-    J --> K[写清算记录]
-    K --> L[触发 hedge rebalance]
-```
+Funding Worker 负责：
 
-### 3.10 Hedging Bot
+- 读取 funding rate 和下次结算时间
+- 对 open positions 执行资金费率结算
+- 写 `funding_events` 和 `ledger_entries`
+- 更新账户风险状态
 
-按交易所净敞口统一对冲，而非逐笔订单对冲。
+### 3.12 Ledger
 
-定义：
+账本记录以下资金变化：
 
-- `internal_net_position(symbol)` = 所有用户仓位求和
-- `external_hedge_position(symbol)` = Hyperliquid 当前仓位
-- `drift = internal_net_position - external_hedge_position`
-
-目标：使 drift 趋近 0。
-
-当前状态：
-
-- 已实现 hedge task / hedge order 数据流
-- 已实现 `mock` adapter 与独立 hedger 进程
-- 已拆分 `hyperliquid` adapter 结构，真实签名与正式下单仍待接通
-
-触发方式：交易后即时触发 + 周期定时校正。
-
-```mermaid
-sequenceDiagram
-    participant ENG as Trade Engine
-    participant H as Hedger
-    participant DB as Database
-    participant HL as Hyperliquid
-
-    ENG->>H: publish exposure delta
-    H->>DB: read target net position
-    H->>HL: read actual external position
-    H->>H: compute drift
-    H->>HL: place hedge order
-    HL-->>H: filled / partial / failed
-    H->>DB: persist hedge action and status
-```
-
-策略参数：
-
-- `hedge_threshold`：小于阈值不触发
-- `cooldown_window`：短窗口内批量净额
-- `max_single_hedge_notional`：单笔上限
-- `circuit_breaker`：连续失败后切换全站 reduce-only
-
-对冲异常处理：
-
-- Hyperliquid API 不可用 → 重试 + 指数退避
-- 部分成交 → 记录偏差，下一周期补齐
-- 外部仓位被清算 / ADL → 报警 + 人工介入
-- 连续失败超阈值 → 暂停新开仓，仅允许平仓
-
-### 3.11 Price Service
-
-- 主行情源：Hyperliquid `allMids` / `candleSnapshot`
-- 兜底源：第三方 API
-- 开发模式：mock + manual override
-
-输出三层价格：
-
-- `index_price`：外部参考价
-- `mark_price`：风控与 PnL 计算
-- `execution_price`：内部成交价
-
-异常识别：价格跳变超阈值 → 暂停交易；价格陈旧超窗口 → 拒绝下单。
-
-### 3.12 Audit / Ledger
-
-- 记录所有余额变更的流水
-- 记录订单、仓位、清算、对冲全生命周期
-- 支持审计回放与问题追踪
+- 充值 / 提现
+- 交易手续费
+- 已实现盈亏
+- 清算
+- 资金费率
 
 ## 4. 核心数据流
 
-### 4.1 钱包登录
+### 4.1 登录
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as Auth API
-    participant DB as Database
+    participant DB as DB
 
     U->>FE: connect wallet
     FE->>API: request challenge
     API->>DB: save nonce
     API-->>FE: challenge message
     FE->>U: sign message
-    FE->>API: address + signature + nonce
-    API->>API: verify signature and expiry
+    FE->>API: address + signature
+    API->>API: verify signature
     API->>DB: create session
     API-->>FE: JWT
 ```
 
-### 4.2 入金
+### 4.2 充值
 
 ```mermaid
 sequenceDiagram
@@ -304,223 +220,178 @@ sequenceDiagram
     participant V as Vault
     participant IDX as Indexer
     participant ACC as Account Service
-    participant DB as Database
 
     U->>FE: approve + deposit
     FE->>V: deposit(amount)
     V-->>IDX: Deposit event
-    IDX->>DB: idempotent event store
-    IDX->>ACC: credit available balance
-    ACC->>DB: update ledger and account
-    ACC-->>FE: refresh balance
+    IDX->>ACC: credit account
 ```
 
-### 4.3 开仓
+### 4.3 下单
 
 ```mermaid
 sequenceDiagram
     participant FE as Frontend
-    participant API as Backend API
-    participant ENG as Trade Engine
+    participant API as Backend
+    participant ORD as Order Service
     participant RISK as Risk Engine
-    participant PRICE as Price Service
     participant DB as Database
     participant HEDGE as Hedger
 
-    FE->>API: place market order
-    API->>ENG: execute order
-    ENG->>PRICE: get mark / execution price
-    ENG->>RISK: pre-trade check
-    RISK-->>ENG: pass
-    ENG->>DB: update balances and position
-    ENG->>DB: write trade and ledger
-    ENG->>HEDGE: publish exposure delta
-    API-->>FE: trade result
+    FE->>API: create order
+    API->>ORD: execute
+    ORD->>RISK: pre-trade check
+    RISK-->>ORD: pass
+    ORD->>DB: update balances/positions
+    ORD->>DB: write trade + ledger
+    ORD->>HEDGE: create hedge task
+    API-->>FE: order result
 ```
 
-### 4.4 平仓与减仓
-
-```mermaid
-flowchart TD
-    A[用户提交 close / reduce] --> B[获取当前持仓]
-    B --> C[获取最新价格]
-    C --> D[计算已实现 PnL]
-    D --> E[释放对应保证金]
-    E --> F[更新 position size / entry price]
-    F --> G[更新 available balance]
-    G --> H[写 trade / ledger]
-    H --> I[发送 hedge rebalance]
-```
-
-### 4.5 提现
+### 4.4 限价单
 
 ```mermaid
 sequenceDiagram
-    participant U as User
     participant FE as Frontend
-    participant API as Withdrawal API
-    participant RISK as Risk Engine
-    participant ACC as Account Service
-    participant V as Vault
-    participant IDX as Indexer
+    participant API as Backend
+    participant DB as Database
+    participant M as Matcher
 
-    U->>FE: request withdraw
-    FE->>API: submit withdraw request
-    API->>ACC: check available balance
-    API->>RISK: check open risk and limits
-    RISK-->>API: pass
-    API->>API: sign withdrawal authorization
-    API-->>FE: signature + nonce + deadline
-    FE->>V: withdraw with signature
-    V-->>IDX: Withdraw event
-    IDX->>ACC: finalize ledger
+    FE->>API: create limit order
+    API->>DB: save order + reserve margin
+    M->>DB: scan open limit orders
+    M->>M: compare with latest price
+    M->>API: trigger execution
+```
+
+### 4.5 清算
+
+```mermaid
+flowchart TD
+    A[价格更新] --> B[重算风险]
+    B --> C{触发清算条件}
+    C -- 否 --> D[继续监控]
+    C -- 是 --> E[执行强平]
+    E --> F[写 liquidation 与 ledger]
+    F --> G[生成反向 hedge task]
 ```
 
 ## 5. 风控设计
 
 ### 5.1 账户与保证金模型
 
-每个用户账户包含：
-
-- `available_balance`：可用于开仓或提现
-- `locked_balance`：已占用初始保证金
+- `available_balance`
+- `locked_balance`
 - `equity = available_balance + locked_balance + unrealized_pnl`
-- `maintenance_margin = abs(position_size) * mark_price * mmr`
-- `margin_ratio = equity / maintenance_margin`
-
-保证金公式：
-
-- `notional = abs(position_size) * mark_price`
-- `initial_margin = notional / leverage`
-- `maintenance_margin = notional * maintenance_margin_rate`
+- `maintenance_margin`
+- `risk_ratio`
 
 ### 5.2 交易前风控
 
-校验项：
+校验内容包括：
 
-- 用户状态非 frozen / banned
-- symbol 状态为 trading
-- 价格源未过期
-- available balance ≥ initial margin + fee
-- leverage ≤ max leverage
-- position notional ≤ max position notional
-- 交易所净敞口未超过全局上限
+- 用户状态
+- symbol 状态
+- 杠杆和下单数量
+- 保证金是否足够
+- 风险状态是否允许开仓
+- 价格源是否有效
 
 ### 5.3 持仓风控
 
-持续监控：
+- 全仓按账户级权益评估
+- 逐仓按单仓权益评估
+- 维持保证金占权益比用于风险展示与状态切换
 
-- equity、maintenance margin、margin ratio
-- symbol 波动率
-- 对冲偏差
-- 价格源健康度
+### 5.4 提现风控
 
-### 5.4 对冲风控
+提现同时受以下限制：
 
-监控指标：
-
-- `internal_net_exposure`
-- `external_hedge_position`
-- `drift = internal - external`
-- `hedge_latency`
-- `hedge_reject_count`
-
-处置策略：
-
-- drift 小于阈值 → 允许延迟补单
-- drift 超阈值 → 立即补单
-- 连续失败 → 暂停新开仓，仅允许减仓 / 平仓
-
-### 5.5 提现风控
-
-校验项：
-
-- available balance 足够
-- 无 LIQUIDATING / FROZEN 状态
-- 未超过单笔 / 单日限额
-- 无未完成清算或未确认链上事件
+- 风险状态
+- 账户可用余额
+- 可兑付额度 `payout_capacity`
+- 链上 operator 授权
 
 ## 6. 清算设计
 
 ### 6.1 触发条件
 
-```
-equity <= maintenance_margin
-```
+- 全仓：账户权益低于维持保证金
+- 逐仓：单仓权益低于维持保证金
 
-等价条件：`margin_ratio <= 1`
+### 6.2 执行结果
 
-### 6.2 清算流程
+- 更新仓位状态
+- 写清算记录
+- 写成交与账本
+- 生成对冲任务
 
-1. 风控扫描器发现风险账户
-2. 标记账户 `LIQUIDATING`，冻结新下单与提现
-3. 读取最新 mark price
-4. 执行部分清算（分档：25% → 50% → 100%）
-5. 计算清算手续费，计入保险基金
-6. 释放保证金，更新已实现盈亏
-7. 生成反向对冲任务
-8. 若权益仍为负，记录坏账由保险基金覆盖
+## 7. 对冲设计
 
-### 6.3 价格区分
+### 7.1 目标定义
 
-- `liquidation_price`：理论触发价
-- `bankruptcy_price`：账户权益归零价
-- `liquidation_execution_price`：实际清算成交价（含保护价差）
+对冲目标仅由系统内部净敞口决定：
 
-## 7. 设计决策
+- `target_hedge_position = internal_net_position`
 
-### 7.1 交易模型
+### 7.2 任务执行
 
-采用 CFD（差价合约）模式。用户与平台资金池成交，平台作为对手方，通过外部对冲转移净风险。
+- 自动重试最多 3 次
+- 失败后可在管理页手动重试
+- 风险快照继续记录真实外部仓位，仅用于监控偏差
 
-CFD 模式使资金、仓位、PnL、清算与对冲形成自然闭环，且与 Market Order 高度匹配。
+### 7.3 风险快照
 
-### 7.2 链上 vs 链下职责划分
+风险快照逐交易对记录：
 
-链上负责资产托管与出入金可验证性；链下负责高频状态变更和风险计算。两者通过 Indexer 实现最终一致。
+- 内部净仓
+- 外部真实仓位
+- 偏差
+- 健康状态
 
-### 7.3 清算与对冲独立服务
+## 8. 资金费率设计
 
-清算和对冲均为持续运行的状态机，独立于同步 API 链路。独立部署便于重试、调度、监控、熔断和审计。
+### 8.1 数据来源
 
-### 7.4 异步对冲
+- `price_ticks.funding_rate`
+- `price_ticks.funding_next_at`
 
-用户下单不等待对冲完成即返回结果。对冲异步执行，配合重试、告警和开仓熔断机制保障风险可控。
+### 8.2 结算规则
 
-### 7.5 全仓保证金模型
+- 正 funding：多头支付，空头收取
+- 负 funding：空头支付，多头收取
 
-首发采用全仓账户模型，账户级风控、清算和提现控制逻辑更简洁。逐仓模式作为后续扩展。
+### 8.3 结算结果
 
-### 7.6 审计账本
+- 更新账户余额
+- 写 `funding_events`
+- 写账本
+- 重新同步风险状态
 
-所有余额变更均写入 ledger_entries，确保资金、订单、清算、对冲全流程可追溯。
+## 9. 关键设计决策
 
-## 8. 路线规划
+### 9.1 交易模型
 
-### Phase 1：单 symbol 完整闭环
+系统采用 CFD 模式，不维护用户撮合订单簿。
 
-- 钱包登录、Vault 入金、后端授权提现
-- BTC-PERP 市价开平仓
-- 保证金与 PnL 系统
-- 净敞口对冲
-- 基础清算
+### 9.2 链上 / 链下边界
 
-### Phase 2：风控增强
+链上负责资产托管与出入金可验证性；链下负责高频状态更新、风控、清算和对冲。
 
-- 分级风控状态
-- 部分清算
-- 对冲 reconcile 与重试策略
-- 管理监控页
+### 9.3 限价单模型
 
-### Phase 3：多 symbol 扩展
+限价单采用条件触发执行模型，不引入完整撮合簿复杂度。
 
-- ETH-PERP 及更多标的
-- symbol 配置中心
-- 按品种风控参数
+### 9.4 对冲模型
 
-### Phase 4：高级功能
+对冲任务只对齐系统内部净敞口，风险快照单独监控外部真实仓位。
 
-- 限价单、条件单
-- 资金费率（Funding Rate）
-- 保险基金
-- 自动减仓（ADL）
+### 9.5 资金模型
+
+账户权益与兑付能力分离，盈利提现受平台真实可兑付余额约束。
+
+## 10. 已知限制
+
+- 外部对冲账户应作为系统专用账户使用
+- 盘口深度为展示层，不参与真实撮合
+- 条件单当前不包含 OCO、追踪止损等高级策略

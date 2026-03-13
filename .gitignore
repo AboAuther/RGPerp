@@ -34,6 +34,3 @@ contracts/broadcast/
 mysql_data/
 redis_data/
 rabbitmq_data/
-
-# Local-only test assets
-.local/
