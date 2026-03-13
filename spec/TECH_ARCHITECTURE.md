@@ -1,376 +1,327 @@
 # 技术架构规范
 
-## 1. 技术栈总览
+本文档描述当前代码库已经实现的技术架构与运行方式，作为对外技术说明与内部开发对齐基线。
 
-| 层级 | 技术选型 | 说明 |
+## 1. 技术栈
+
+| 层级 | 选型 | 当前用途 |
 | --- | --- | --- |
-| **前端** | React + Vite + TypeScript | 纯客户端 SPA |
-| **UI 组件库** | Ant Design (antd) | 成熟、组件完整、TypeScript 友好、适合数据密集型金融界面 |
-| **图表** | TradingView Advanced Chart Embed | 交易终端 K 线与技术指标 |
-| **Web3 交互** | wagmi + viem | 钱包连接、合约调用、签名 |
-| **状态管理** | zustand | 轻量、TS 友好、适合中等规模 SPA |
-| **数据请求** | TanStack Query (React Query) | 缓存、轮询、失效与重取 |
-| **后端** | Go + Gin + GORM | 高性能 HTTP 框架 + ORM |
-| **数据库** | MySQL 8.0 | 主业务存储 |
-| **缓存** | Redis | 会话、价格缓存、分布式锁、速率限制 |
-| **消息队列** | RabbitMQ | 服务间异步通信 |
-| **合约开发** | Foundry (Solidity) | 编译、测试、部署 |
-| **链上交互 (后端)** | go-ethereum | 事件监听、交易签名 |
-| **容器编排** | Docker Compose | 本地一键启动 |
+| 前端 | React + Vite + TypeScript | 纯客户端 SPA |
+| UI | Ant Design | 数据密集型交易界面、表单、表格、反馈组件 |
+| 图表 | TradingView Embed | K 线、指标与专业图表交互 |
+| 状态与请求 | TanStack Query + 本地状态 | API 拉取、轮询、界面状态管理 |
+| 后端 API | Go + Gin | HTTP API、鉴权、账户、订单、Admin |
+| ORM | GORM | MySQL 访问与迁移 |
+| 数据库 | MySQL 8.0 | 主业务数据存储 |
+| 缓存 | Redis | 健康检查与扩展预留 |
+| 消息队列 | RabbitMQ | 基础依赖已接入，本阶段未作为核心业务主线 |
+| 合约 | Solidity + Foundry | Vault 与 MockUSDC |
+| 链交互 | go-ethereum | 本地链事件监听、签名与地址配置 |
+| 对冲桥接 | Go + Python bridge | 通过 Hyperliquid SDK 执行真实测试网对冲 |
+| 编排 | Docker Compose | 本地一键启动后端多进程 |
 
-Ant Design 覆盖 Table / Form / Modal / Notification / Layout / Tabs / Statistic 等交易所常用组件，TypeScript 类型完整，几乎不需要手写 CSS。
+## 2. 系统分层
 
-## 2. 项目目录结构
+当前系统采用“链上资金托管 + 链下交易与风控 + 外部真实对冲”的架构。
+
+### 2.1 链上层
+
+- `Vault.sol`
+  - 负责托管 USDC 资金
+  - 接受充值
+  - 校验 operator 签名后执行提现
+- `MockUSDC.sol`
+  - 本地联调用测试稳定币
+
+### 2.2 链下交易层
+
+- `server`
+  - 账户、市场、订单、提现、Admin API
+- `matcher`
+  - 限价单触发与成交执行
+- `hedger`
+  - 内部净敞口对冲至 Hyperliquid Testnet
+- `liquidator`
+  - 风险扫描与强平执行
+- `fundingd`
+  - 资金费率周期结算
+- `indexer`
+  - 监听 Vault 链上事件并入账
+
+### 2.3 外部市场层
+
+- Hyperliquid Testnet
+  - 真实外部对冲 venue
+- Binance / TradingView
+  - 外部价格、图表与 funding 参考输入
+
+## 3. 当前代码结构
+
+### 3.1 前端
+
+当前前端主要目录：
 
 ```text
-RGPerp/
-├── frontend/                          # React SPA
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/                # Header, Sidebar, Footer
-│   │   │   ├── trading/               # OrderPanel, KlineChart, PositionTable
-│   │   │   ├── account/               # BalanceCard, DepositModal, WithdrawModal
-│   │   │   ├── auth/                  # ConnectWallet, LoginButton
-│   │   │   └── common/                # LoadingSpinner, ErrorBoundary
-│   │   ├── pages/
-│   │   │   ├── TradePage.tsx
-│   │   │   ├── AccountPage.tsx
-│   │   │   ├── HistoryPage.tsx
-│   │   │   └── AdminPage.tsx
-│   │   ├── hooks/                     # useAuth, useBalance, usePosition, usePrice
-│   │   ├── services/                  # API client, WebSocket client
-│   │   ├── stores/                    # zustand stores
-│   │   ├── types/                     # TypeScript 类型定义
-│   │   ├── utils/                     # 格式化、常量、合约 ABI
-│   │   ├── App.tsx
-│   │   └── main.tsx
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tsconfig.json
-│   └── package.json
-│
-├── backend/                           # Go 后端
-│   ├── cmd/
-│   │   ├── server/                    # API 服务入口
-│   │   │   └── main.go
-│   │   ├── indexer/                   # 链上事件监听服务入口
-│   │   │   └── main.go
-│   │   ├── hedger/                    # 对冲服务入口
-│   │   │   └── main.go
-│   │   └── liquidator/                # 清算服务入口
-│   │       └── main.go
-│   ├── internal/
-│   │   ├── config/                    # 配置加载
-│   │   ├── middleware/                # JWT 鉴权、CORS、限流、日志
-│   │   ├── handler/                   # HTTP handler (Gin)
-│   │   │   ├── auth.go
-│   │   │   ├── account.go
-│   │   │   ├── market.go
-│   │   │   ├── order.go
-│   │   │   ├── position.go
-│   │   │   ├── withdrawal.go
-│   │   │   ├── admin.go
-│   │   │   └── ws.go
-│   │   ├── service/                   # 业务逻辑层
-│   │   │   ├── auth.go
-│   │   │   ├── account.go
-│   │   │   ├── order.go
-│   │   │   ├── position.go
-│   │   │   ├── withdrawal.go
-│   │   │   └── market.go
-│   │   ├── engine/                    # 交易引擎
-│   │   │   ├── engine.go
-│   │   │   ├── matcher.go
-│   │   │   └── pnl.go
-│   │   ├── risk/                      # 风控引擎
-│   │   │   ├── risk.go
-│   │   │   ├── margin.go
-│   │   │   └── liquidation.go
-│   │   ├── hedge/                     # 对冲服务
-│   │   │   ├── hedger.go
-│   │   │   ├── reconciler.go
-│   │   │   └── circuit_breaker.go
-│   │   ├── indexer/                   # 链上事件处理
-│   │   │   ├── listener.go
-│   │   │   └── processor.go
-│   │   ├── price/                     # 价格服务
-│   │   │   ├── provider.go
-│   │   │   ├── hyperliquid.go
-│   │   │   └── mock.go
-│   │   ├── mq/                        # RabbitMQ 生产与消费
-│   │   │   ├── publisher.go
-│   │   │   └── consumer.go
-│   │   ├── ws/                        # WebSocket 推送
-│   │   │   └── hub.go
-│   │   ├── model/                     # GORM 模型定义
-│   │   │   ├── user.go
-│   │   │   ├── account.go
-│   │   │   ├── order.go
-│   │   │   ├── trade.go
-│   │   │   ├── position.go
-│   │   │   ├── symbol.go
-│   │   │   ├── vault_event.go
-│   │   │   ├── withdrawal.go
-│   │   │   ├── hedge.go
-│   │   │   ├── liquidation.go
-│   │   │   ├── ledger.go
-│   │   │   └── price_tick.go
-│   │   ├── repository/                # 数据访问层
-│   │   └── pkg/                       # 工具包
-│   │       ├── decimal/               # shopspring/decimal 封装
-│   │       ├── hyperliquid/           # Hyperliquid API Client
-│   │       ├── ethereum/              # go-ethereum 封装
-│   │       ├── jwt/                   # JWT 工具
-│   │       └── errors/                # 统一错误码
-│   ├── migrations/                    # 数据库迁移脚本
-│   ├── go.mod
-│   └── go.sum
-│
-├── contracts/                         # Solidity 合约
-│   ├── src/
-│   │   ├── Vault.sol
-│   │   └── MockUSDC.sol
-│   ├── test/
-│   ├── script/
-│   └── foundry.toml
-│
-├── spec/                              # 技术规范文档
-│   ├── TECH_ARCHITECTURE.md
-│   ├── DATABASE_SCHEMA.md
-│   └── API_SPEC.md
-│
-├── docker-compose.yml
-├── README.md
-├── ARCHITECTURE.md
-└── AI_REPORT.md
+frontend/src/
+├── components/
+│   ├── brand/
+│   ├── landing/
+│   ├── layout/
+│   └── trading/
+├── pages/
+│   ├── LandingPage.tsx
+│   ├── TradePage.tsx
+│   ├── AccountPage.tsx
+│   ├── AdminPage.tsx
+│   └── DocsPage.tsx
+├── services/
+├── types/
+├── utils/
+├── App.tsx
+└── styles.css
 ```
 
-## 3. 基础设施
+说明：
 
-### 3.1 Docker Compose
+- 前端当前不依赖 WebSocket 主链路
+- 主要通过轮询 API 驱动交易、账户和 Admin 页面
+- 用户可见交易对统一显示为 `BTC/USDC`、`ETH/USDC`、`SOL/USDC`
 
-```yaml
-services:
-  mysql:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: rg_perp
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
+### 3.2 后端
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-
-volumes:
-  mysql_data:
-```
-
-### 3.2 环境变量
-
-```bash
-# backend/.env
-
-# --- 服务 ---
-SERVER_PORT=8080
-GIN_MODE=debug
-
-# --- MySQL ---
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=root
-DB_NAME=rg_perp
-
-# --- Redis ---
-REDIS_ADDR=localhost:6379
-REDIS_PASSWORD=
-REDIS_DB=0
-
-# --- RabbitMQ ---
-RABBITMQ_URL=amqp://guest:guest@localhost:5672/
-
-# --- JWT ---
-JWT_SECRET=replace_me_with_a_real_secret
-JWT_EXPIRE_HOURS=24
-
-# --- 链上 ---
-RPC_URL=http://127.0.0.1:8545
-CHAIN_ID=31337
-VAULT_ADDRESS=0x...
-USDC_ADDRESS=0x...
-OPERATOR_PRIVATE_KEY=0x...
-
-# --- Hyperliquid ---
-HYPERLIQUID_API_URL=https://api.hyperliquid-testnet.xyz
-HYPERLIQUID_WALLET_ADDRESS=0x...
-HYPERLIQUID_PRIVATE_KEY=0x...
-
-# --- Binance ---
-BINANCE_FUTURES_API_URL=https://fapi.binance.com
-
-# --- 价格 ---
-PRICE_SOURCE=binance
-```
-
-```bash
-# frontend/.env.local
-
-VITE_API_BASE_URL=http://localhost:8080/api/v1
-VITE_WS_URL=ws://localhost:8080/ws
-VITE_CHAIN_ID=31337
-VITE_VAULT_ADDRESS=0x...
-VITE_USDC_ADDRESS=0x...
-```
-
-## 4. Go 核心依赖
+当前后端目录：
 
 ```text
-github.com/gin-gonic/gin           # HTTP 框架
-gorm.io/gorm                       # ORM
-gorm.io/driver/mysql                # MySQL 驱动
-github.com/redis/go-redis/v9        # Redis 客户端
-github.com/rabbitmq/amqp091-go      # RabbitMQ 客户端
-github.com/golang-jwt/jwt/v5        # JWT
-github.com/shopspring/decimal        # 高精度十进制运算
-github.com/ethereum/go-ethereum      # 以太坊交互
-github.com/gorilla/websocket         # WebSocket
-github.com/spf13/viper               # 配置管理
-go.uber.org/zap                      # 日志
+backend/
+├── cmd/
+│   ├── server/
+│   ├── indexer/
+│   ├── hedger/
+│   ├── liquidator/
+│   ├── matcher/
+│   └── fundingd/
+├── internal/
+│   ├── config/
+│   ├── handler/
+│   ├── hedge/
+│   ├── indexer/
+│   ├── middleware/
+│   ├── model/
+│   ├── pkg/
+│   ├── router/
+│   └── service/
+└── scripts/
+    └── hyperliquid_bridge.py
 ```
 
-## 5. 前端核心依赖
+说明：
 
-```text
-react                               # UI 库
-react-dom
-react-router-dom                    # 路由
-typescript                          # 类型
-vite                                # 构建
-antd                                # UI 组件库
-@ant-design/icons                   # 图标
-react-tradingview-embed             # TradingView 图表嵌入
-wagmi                               # Web3 钱包
-viem                                # 链上交互
-@tanstack/react-query               # 数据请求
-zustand                             # 状态管理
-axios                               # HTTP 客户端
-dayjs                               # 时间处理
+- 风控、订单、清算、资金费率等核心业务逻辑集中在 `internal/service`
+- Hyperliquid 真实执行由 Go `hedger` 调用 Python bridge 完成
+
+## 4. 当前已实现模块
+
+### 4.1 账户与资金
+
+- 钱包签名登录
+- 充值信息查询
+- 链上充值事件入账
+- 提现签名授权与链上提现确认
+- 账户权益、可提现余额、净入金、已结算/待结算盈利展示
+
+### 4.2 交易与仓位
+
+- 市价单
+- 限价单（GTC，条件触发模型）
+- 同方向仓位合并
+- 反方向仓位分仓，不自动净仓
+- `isolated / cross`
+- 部分平仓、平仓、反手
+
+### 4.3 风控
+
+- 初始保证金、维持保证金
+- 未实现盈亏、已实现盈亏
+- 账户风险状态推进
+- isolated 单仓清算
+- cross 账户口径风险管理
+- 提现前风控校验
+
+### 4.4 对冲
+
+- 内部净敞口生成 hedge task
+- Hyperliquid Testnet 真实执行
+- 自动重试
+- Admin 手动重试
+- 风险快照与对冲任务监控
+
+### 4.5 资金费率
+
+- 基于外部 funding_rate / funding_next_at 的周期结算
+- 结算后写 `funding_events`
+- 同步账本与风险状态
+
+### 4.6 Admin
+
+- 系统概览
+- 对冲任务列表
+- 风险快照列表
+- 强平记录列表
+- 风险告警列表
+- 管理员白名单访问控制
+
+## 5. 交易模型
+
+当前交易模型不是订单簿撮合，而是 CFD 模式：
+
+1. 用户在平台内部开仓、平仓
+2. 平台记录仓位、保证金、PnL 和风险状态
+3. 系统基于内部净敞口创建 hedge task
+4. `hedger` 将净风险搬到 Hyperliquid Testnet
+
+这意味着：
+
+- 用户成交不依赖另一个用户挂单
+- 外部对冲用于平台风险中性，而不是用户撮合对手盘
+- 限价单本质上是“价格条件触发后执行真实成交”，不是订单簿挂单撮合
+
+## 6. 对冲语义
+
+当前对冲逻辑采用以下口径：
+
+- 对冲目标只由**系统内部净敞口**决定
+- 外部真实仓位只用于风险快照和监控，不参与新任务目标计算
+- 自动 `reconcile` 已关闭，偏差仅做监控与人工处理
+
+任务执行策略：
+
+- 创建 task 时记录：
+  - `internal_net_position`
+  - `target_hedge_position`
+  - `current_hedge_position`
+  - `drift`
+- 执行失败后自动最多重试 3 次
+- 达到上限后由 admin 手动重试
+
+## 7. 资金模型
+
+当前资金模型分为两层：
+
+### 7.1 交易权益层
+
+- `available_balance`
+- `locked_balance`
+- `equity`
+- `unrealized_pnl`
+
+用于：
+
+- 下单
+- 保证金
+- 清算
+- 风险状态判断
+
+### 7.2 兑付层
+
+- `net_deposits`
+- `settled_pnl_balance`
+- `unsettled_pnl_balance`
+- `settlement_pool`
+- `payout_capacity`
+
+用于：
+
+- 判断盈利是否具备真实兑付来源
+- 限制用户盈利提现
+
+结论：
+
+- 用户权益可即时反映盈利
+- 但盈利只有在进入结算池后，才可提现
+
+## 8. 进程与启动方式
+
+当前 Docker Compose 已统一后端多进程：
+
+- `mysql`
+- `redis`
+- `rabbitmq`
+- `server`
+- `indexer`
+- `hedger`
+- `liquidator`
+- `matcher`
+- `fundingd`
+
+默认对外提供：
+
+- `server`: `127.0.0.1:18080`
+- `mysql`: `127.0.0.1:3306`
+- `redis`: `127.0.0.1:6379`
+- `rabbitmq`: `127.0.0.1:5672`
+
+## 9. 关键数据流
+
+### 9.1 充值
+
+```mermaid
+flowchart LR
+    A["User Wallet"] --> B["Vault.deposit"]
+    B --> C["Indexer"]
+    C --> D["vault_events"]
+    D --> E["accounts / ledger_entries"]
+    E --> F["Account API"]
 ```
 
-## 6. 消息队列设计
+### 9.2 下单
 
-### 6.1 Exchange 与 Queue 清单
-
-| Exchange | Type | 绑定 Queue | 生产者 | 消费者 | 说明 |
-| --- | --- | --- | --- | --- | --- |
-| `exchange.vault` | topic | `q.vault.events` | Indexer | Account Service | 链上存取款事件 |
-| `exchange.trade` | topic | `q.trade.executed` | Trade Engine | Hedger, Account | 成交后触发对冲和账户更新 |
-| `exchange.hedge` | topic | `q.hedge.tasks` | Trade Engine | Hedger | 对冲任务 |
-| `exchange.risk` | topic | `q.risk.alerts` | Risk Engine | Admin / Alerting | 风控预警 |
-| `exchange.liquidation` | topic | `q.liquidation.tasks` | Risk Engine | Liquidation Service | 清算任务 |
-| `exchange.price` | fanout | `q.price.updates` | Price Service | WS Hub, Risk Engine | 价格广播 |
-
-### 6.2 消息格式约定
-
-所有消息体使用 JSON，包含以下公共字段：
-
-```json
-{
-  "id": "uuid",
-  "type": "trade.executed",
-  "timestamp": 1710000000000,
-  "payload": { }
-}
+```mermaid
+flowchart LR
+    A["Frontend Order"] --> B["Server"]
+    B --> C["Risk Check"]
+    C --> D["orders / positions / trades"]
+    D --> E["hedge_tasks"]
+    E --> F["hedger"]
+    F --> G["Hyperliquid Testnet"]
 ```
 
-## 7. Redis 使用规划
+### 9.3 强平
 
-| 用途 | Key Pattern | 说明 |
-| --- | --- | --- |
-| 登录 nonce | `auth:nonce:{address}` | 5 分钟 TTL |
-| JWT 黑名单 | `auth:blacklist:{token_hash}` | 与 token 过期时间一致 |
-| 价格缓存 | `price:{symbol}:latest` | 实时 mark price |
-| K 线缓存 | `price:{symbol}:kline:{interval}` | 最近 N 根 K 线 |
-| 分布式锁 | `lock:order:{user_id}` | 防并发下单 |
-| 分布式锁 | `lock:hedge:{symbol}` | 防并发对冲 |
-| 分布式锁 | `lock:withdraw:{user_id}` | 防并发提现 |
-| API 限流 | `ratelimit:{address}:{endpoint}` | 滑窗计数器 |
-| WS 会话 | `ws:session:{user_id}` | 在线状态 |
-
-## 8. WebSocket 推送设计
-
-### 连接地址
-
-```
-ws://localhost:8080/ws?token={jwt}
+```mermaid
+flowchart LR
+    A["Price Tick"] --> B["Risk State Update"]
+    B --> C["liquidator"]
+    C --> D["liquidations / trades / positions"]
+    D --> E["hedge_tasks"]
+    E --> F["hedger"]
 ```
 
-### 频道与消息类型
+### 9.4 资金费率
 
-| 频道 | 消息类型 | 说明 |
-| --- | --- | --- |
-| `price` | `price.update` | 实时价格推送 |
-| `account` | `balance.update` | 余额变化 |
-| `position` | `position.update` | 仓位变化 |
-| `order` | `order.update` | 订单状态变化 |
-| `system` | `system.alert` | 风控/维护通知 |
-
-客户端订阅消息格式：
-
-```json
-{ "action": "subscribe", "channels": ["price:BTC-PERP", "account", "position"] }
+```mermaid
+flowchart LR
+    A["price_ticks funding_rate"] --> B["fundingd"]
+    B --> C["funding_events"]
+    C --> D["ledger_entries"]
+    D --> E["accounts"]
+    E --> F["risk sync"]
 ```
 
-服务端推送消息格式：
+## 10. 当前边界
 
-```json
-{
-  "channel": "price:BTC-PERP",
-  "type": "price.update",
-  "data": {
-    "symbol": "BTC-PERP",
-    "mark_price": "67500.50",
-    "index_price": "67498.00",
-    "timestamp": 1710000000000
-  }
-}
-```
+以下能力当前未实现或仅为第一阶段实现：
 
-## 9. 安全设计
+- 完整订单簿撮合
+- 用户间 maker/taker 撮合深度
+- WebSocket 主驱动实时推送
+- 平台外部资金费率收益回流建模
+- 自动 reconcile 外部脏仓修复
+- 生产级告警、审计与高可用部署
 
-### 9.1 鉴权
+当前技术架构面向：
 
-- 钱包签名验证 + JWT Token
-- JWT 过期 + Redis 黑名单支持主动登出
-- 所有写操作 API 需要 JWT，读操作中敏感数据也需要
+- 本地完整联调
+- 演示级完整流程
+- 永续交易核心链路验证
 
-### 9.2 防重放
-
-- 登录 challenge 包含 nonce + timestamp + domain + chainId
-- nonce 单次有效，消费后作废
-- 提现 nonce 上链，合约校验不可重用
-
-### 9.3 并发保护
-
-- 下单、提现、清算等关键路径使用 Redis 分布式锁
-- 数据库关键更新使用乐观锁（GORM `version` 字段）
-
-### 9.4 API 限流
-
-- 基于 IP + 钱包地址的双维度限流
-- 使用 Redis 滑窗计数器实现
+而不是生产环境多地域高可用部署。
