@@ -565,7 +565,7 @@ export default function AccountPage() {
   )
 
   return (
-    <div>
+    <div className="rg-app-page rg-app-page--account">
       {contextHolder}
       <Typography.Title level={3}>资产总览</Typography.Title>
       {!authenticated ? (

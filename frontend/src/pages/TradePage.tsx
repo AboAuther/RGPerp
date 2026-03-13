@@ -653,7 +653,7 @@ export default function TradePage() {
   )
 
   return (
-    <div>
+    <div className="rg-app-page rg-app-page--trade">
       {contextHolder}
       <Card
         style={{ marginBottom: 16, border: 'none' }}
