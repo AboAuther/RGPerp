@@ -13,6 +13,10 @@ import {
 } from 'simple-icons'
 import BlobCursor from '../components/reactbits/BlobCursor'
 import MagicRings from '../components/reactbits/MagicRings'
+import BrandLogo from '../components/brand/BrandLogo'
+import ShinyText from '../components/landing/ShinyText'
+import GlitchText from '../components/landing/GlitchText'
+import VariableProximityText from '../components/landing/VariableProximityText'
 import './LandingPage.css'
 
 type LogoItem = {
@@ -141,26 +145,35 @@ export default function LandingPage() {
       <div className="landing-noise" aria-hidden />
 
       <main className="landing-main">
+        <header className="landing-topbar">
+          <button type="button" className="landing-brand-button" onClick={() => navigate('/')}>
+            <BrandLogo size={48} />
+            <ShinyText text="RG Perp" className="landing-brand-text" />
+          </button>
+          <Button className="landing-docs-top-btn" size="large" type="text" onClick={() => navigate('/docs')}>
+            Read Docs
+          </Button>
+        </header>
+
         <section className="landing-hero">
           <div className="landing-copy">
-            <Typography.Text className="landing-tag">RG Perp</Typography.Text>
             <Typography.Title level={1} className="landing-title">
-              Build, Trade,
+              <GlitchText text="Build, Trade," className="landing-glitch-line" />
               <br />
-              Hedge
+              <GlitchText text="Hedge" className="landing-glitch-line" />
               <br />
-              Engine
+              <GlitchText text="Engine" className="landing-glitch-line" />
             </Typography.Title>
             <Typography.Paragraph className="landing-subtitle">
-              Clean perpetual infrastructure with risk control, liquidation, and external hedging.
+              <VariableProximityText
+                text="Clean perpetual infrastructure with risk control, liquidation, and external hedging."
+                className="landing-variable-text"
+              />
             </Typography.Paragraph>
 
             <div className="landing-actions">
               <Button className="landing-launch-btn" size="large" onClick={() => navigate('/app')}>
                 Launch App
-              </Button>
-              <Button className="landing-docs-btn" size="large" type="text" onClick={() => navigate('/docs')}>
-                Read Docs
               </Button>
             </div>
           </div>
