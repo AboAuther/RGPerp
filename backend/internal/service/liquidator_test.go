@@ -61,3 +61,64 @@ func TestLiquidatorService_LiquidatesDangerPosition(t *testing.T) {
 		t.Fatalf("load liquidation hedge task: %v", err)
 	}
 }
+
+func TestLiquidatorService_LiquidatesBreachedIsolatedPositionDespiteHealthyAccountBalance(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+
+	if err := db.Model(&model.Account{}).Where("user_id = ?", 1).Updates(map[string]any{
+		"available_balance": decimal.RequireFromString("300"),
+		"locked_balance":    decimal.RequireFromString("0.0723123"),
+	}).Error; err != nil {
+		t.Fatalf("update account: %v", err)
+	}
+	position := model.Position{
+		UserID:           1,
+		Symbol:           "BTC-PERP",
+		Side:             "short",
+		MarginMode:       "isolated",
+		Size:             decimal.RequireFromString("0.001"),
+		EntryPrice:       decimal.RequireFromString("72312.3"),
+		MarkPrice:        decimal.RequireFromString("72312.3"),
+		LiquidationPrice: decimal.RequireFromString("72348.438080959520239900"),
+		Margin:           decimal.RequireFromString("0.0723123"),
+		Leverage:         1000,
+		Status:           "open",
+	}
+	if err := db.Create(&position).Error; err != nil {
+		t.Fatalf("create position: %v", err)
+	}
+	if err := db.Create(&model.PriceTick{
+		Symbol:     "BTC-PERP",
+		IndexPrice: decimal.RequireFromString("72490"),
+		MarkPrice:  decimal.RequireFromString("72450.4"),
+		BestBid:    decimal.RequireFromString("72435.9"),
+		BestAsk:    decimal.RequireFromString("72464.9"),
+		Source:     "mock",
+	}).Error; err != nil {
+		t.Fatalf("create latest tick: %v", err)
+	}
+
+	riskState, err := buildRiskState(db, 1)
+	if err != nil {
+		t.Fatalf("build risk state: %v", err)
+	}
+	if riskState.RiskLevel != "liquidating" {
+		t.Fatalf("expected liquidating risk level, got %s", riskState.RiskLevel)
+	}
+	if !riskState.HasIsolatedBreach {
+		t.Fatal("expected isolated breach to be detected")
+	}
+
+	svc := NewLiquidatorService(db, zap.NewNop())
+	if err := svc.scanAndLiquidate(); err != nil {
+		t.Fatalf("scan and liquidate failed: %v", err)
+	}
+
+	var updated model.Position
+	if err := db.First(&updated, position.ID).Error; err != nil {
+		t.Fatalf("reload position: %v", err)
+	}
+	if updated.Status != "closed" {
+		t.Fatalf("expected isolated position closed, got %s", updated.Status)
+	}
+}

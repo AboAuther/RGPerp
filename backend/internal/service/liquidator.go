@@ -98,14 +98,32 @@ func (s *LiquidatorService) liquidateUser(userID uint64) error {
 			return err
 		}
 
+		targets := make([]model.Position, 0, len(positions))
 		for _, pos := range positions {
 			pos.MarkPrice = latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice)
+			sym := symbolMap[pos.Symbol]
+			maintenanceRate := effectiveMaintenanceRate(sym.InitialMarginRate, sym.MaintenanceMarginRate, pos.Leverage)
+			if normalizeMarginMode(pos.MarginMode) == "cross" {
+				if riskState.HasCrossLiquidation {
+					targets = append(targets, pos)
+				}
+				continue
+			}
+			if isolatedPositionShouldLiquidate(pos, pos.MarkPrice, maintenanceRate) {
+				targets = append(targets, pos)
+			}
+		}
+		if len(targets) == 0 {
+			return nil
+		}
+
+		for _, pos := range targets {
 			sym := symbolMap[pos.Symbol]
 			originalMarkPrice := pos.MarkPrice
 			originalLiquidationPrice := pos.LiquidationPrice
 			portion := decimal.RequireFromString("0.5")
 			liquidationType := "partial"
-			if riskState.Equity.LessThanOrEqual(decimal.Zero) || len(positions) == 1 {
+			if normalizeMarginMode(pos.MarginMode) != "cross" || riskState.Equity.LessThanOrEqual(decimal.Zero) || len(targets) == 1 {
 				portion = decimal.NewFromInt(1)
 				liquidationType = "full"
 			}
@@ -258,15 +276,20 @@ func (s *LiquidatorService) liquidateUser(userID uint64) error {
 				return err
 			}
 
-			riskState, err = syncUserRiskStatusTx(tx, userID)
-			if err != nil {
-				return err
-			}
-			if riskState.RiskLevel != "liquidating" {
-				break
+			if normalizeMarginMode(pos.MarginMode) == "cross" {
+				riskState, err = syncUserRiskStatusTx(tx, userID)
+				if err != nil {
+					return err
+				}
+				if !riskState.HasCrossLiquidation {
+					break
+				}
 			}
 		}
 
+		if _, err := syncUserRiskStatusTx(tx, userID); err != nil {
+			return err
+		}
 		return nil
 	})
 }

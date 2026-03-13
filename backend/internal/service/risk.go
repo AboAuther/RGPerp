@@ -23,6 +23,9 @@ type RiskState struct {
 	FreeCollateral      decimal.Decimal
 	WithdrawableBalance decimal.Decimal
 	MarginRatio         decimal.Decimal
+	CrossMarginRatio    decimal.Decimal
+	HasCrossLiquidation bool
+	HasIsolatedBreach   bool
 	RiskLevel           string
 }
 
@@ -63,17 +66,36 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	unrealized := decimal.Zero
 	totalInitial := decimal.Zero
 	totalMaintenance := decimal.Zero
+	crossLocked := decimal.Zero
+	crossUnrealized := decimal.Zero
+	crossMaintenance := decimal.Zero
+	hasCrossPositions := false
+	hasIsolatedBreach := false
 	for _, pos := range positions {
 		markPrice := latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice)
-		unrealized = unrealized.Add(calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size))
+		positionPnL := calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size)
+		unrealized = unrealized.Add(positionPnL)
 		maintenanceRate := decimal.Zero
 		if sym, ok := symbolMap[pos.Symbol]; ok {
 			maintenanceRate = effectiveMaintenanceRate(sym.InitialMarginRate, sym.MaintenanceMarginRate, pos.Leverage)
 		}
 		notional := markPrice.Mul(pos.Size)
+		maintenanceMargin := notional.Mul(maintenanceRate)
 		initialMargin := pos.Margin.Round(18)
 		totalInitial = totalInitial.Add(initialMargin)
-		totalMaintenance = totalMaintenance.Add(notional.Mul(maintenanceRate))
+		totalMaintenance = totalMaintenance.Add(maintenanceMargin)
+
+		if normalizeMarginMode(pos.MarginMode) == "cross" {
+			hasCrossPositions = true
+			crossLocked = crossLocked.Add(initialMargin)
+			crossUnrealized = crossUnrealized.Add(positionPnL)
+			crossMaintenance = crossMaintenance.Add(maintenanceMargin)
+			continue
+		}
+
+		if isolatedPositionShouldLiquidate(pos, markPrice, maintenanceRate) {
+			hasIsolatedBreach = true
+		}
 	}
 
 	equity := account.AvailableBalance.Add(account.LockedBalance).Add(unrealized).Round(18)
@@ -82,6 +104,15 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	if equity.GreaterThan(decimal.Zero) {
 		marginRatio = totalMaintenance.Div(equity).Mul(decimal.NewFromInt(100)).Round(6)
 	}
+
+	crossEquity := account.AvailableBalance.Add(crossLocked).Add(crossUnrealized).Round(18)
+	crossFreeCollateral := crossEquity.Sub(crossLocked).Sub(pending).Sub(openOrderReserved)
+	crossMarginRatio := decimal.Zero
+	if crossEquity.GreaterThan(decimal.Zero) {
+		crossMarginRatio = crossMaintenance.Div(crossEquity).Mul(decimal.NewFromInt(100)).Round(6)
+	}
+	hasCrossLiquidation := hasCrossPositions &&
+		(crossEquity.LessThanOrEqual(crossMaintenance) || crossMarginRatio.GreaterThanOrEqual(decimal.NewFromInt(100)))
 
 	riskBuffer := equity.Sub(totalMaintenance).Sub(pending).Sub(openOrderReserved)
 	maxWithdrawByAvailable := account.AvailableBalance.Sub(pending)
@@ -94,11 +125,11 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 	switch {
 	case user.Status == "frozen":
 		riskLevel = "frozen"
-	case len(positions) > 0 && (equity.LessThanOrEqual(totalMaintenance) || marginRatio.GreaterThanOrEqual(decimal.NewFromInt(100))):
+	case len(positions) > 0 && (hasIsolatedBreach || hasCrossLiquidation):
 		riskLevel = "liquidating"
-	case len(positions) > 0 && (marginRatio.GreaterThanOrEqual(decimal.NewFromInt(80)) || freeCollateral.LessThanOrEqual(decimal.Zero)):
+	case hasCrossPositions && (crossMarginRatio.GreaterThanOrEqual(decimal.NewFromInt(80)) || crossFreeCollateral.LessThanOrEqual(decimal.Zero)):
 		riskLevel = "reduce_only"
-	case len(positions) > 0 && marginRatio.GreaterThanOrEqual(decimal.NewFromInt(60)):
+	case hasCrossPositions && crossMarginRatio.GreaterThanOrEqual(decimal.NewFromInt(60)):
 		riskLevel = "at_risk"
 	}
 
@@ -116,8 +147,21 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		FreeCollateral:      freeCollateral.Round(18),
 		WithdrawableBalance: withdrawable.Round(18),
 		MarginRatio:         marginRatio,
+		CrossMarginRatio:    crossMarginRatio,
+		HasCrossLiquidation: hasCrossLiquidation,
+		HasIsolatedBreach:   hasIsolatedBreach,
 		RiskLevel:           riskLevel,
 	}, nil
+}
+
+func isolatedPositionShouldLiquidate(pos model.Position, markPrice, maintenanceRate decimal.Decimal) bool {
+	if normalizeMarginMode(pos.MarginMode) == "cross" {
+		return false
+	}
+	unrealized := calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size)
+	equity := pos.Margin.Add(unrealized)
+	maintenanceMargin := markPrice.Mul(pos.Size).Mul(maintenanceRate)
+	return equity.LessThanOrEqual(maintenanceMargin)
 }
 
 func pendingOpenOrderReserved(db *gorm.DB, userID uint64) (decimal.Decimal, error) {
