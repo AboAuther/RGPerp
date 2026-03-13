@@ -13,6 +13,7 @@ import (
 
 func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Config) *gin.Engine {
 	r := gin.New()
+	service.SetAdminWallets(cfg.Admin.Wallets)
 
 	r.Use(middleware.CORS())
 	r.Use(middleware.Logger(logger))
@@ -48,6 +49,7 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authenticated.Use(middleware.Auth(cfg.JWT.Secret))
 	authenticated.GET("/account", accountH.Get)
 	authenticated.GET("/deposits", accountH.Deposits)
+	authenticated.GET("/funding-history", accountH.FundingHistory)
 	authenticated.GET("/wallet/deposit-info", walletH.DepositInfo)
 	authenticated.POST("/withdrawals", withdrawalH.Create)
 	authenticated.GET("/withdrawals", withdrawalH.List)
@@ -57,11 +59,14 @@ func Setup(db *gorm.DB, rds *redis.Client, logger *zap.Logger, cfg *config.Confi
 	authenticated.GET("/open-orders", orderH.ListOpenOrders)
 	authenticated.GET("/trades", orderH.ListTrades)
 	authenticated.GET("/positions", orderH.ListPositions)
-	authenticated.GET("/admin/overview", adminH.Overview)
-	authenticated.GET("/admin/hedge-tasks", adminH.HedgeTasks)
-	authenticated.GET("/admin/risk-snapshots", adminH.RiskSnapshots)
-	authenticated.GET("/admin/liquidations", adminH.Liquidations)
-	authenticated.GET("/admin/alerts", adminH.Alerts)
+	adminGroup := authenticated.Group("/admin")
+	adminGroup.Use(middleware.AdminOnly())
+	adminGroup.GET("/overview", adminH.Overview)
+	adminGroup.GET("/hedge-tasks", adminH.HedgeTasks)
+	adminGroup.POST("/hedge-tasks/:id/retry", adminH.RetryHedgeTask)
+	adminGroup.GET("/risk-snapshots", adminH.RiskSnapshots)
+	adminGroup.GET("/liquidations", adminH.Liquidations)
+	adminGroup.GET("/alerts", adminH.Alerts)
 
 	return r
 }

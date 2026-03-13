@@ -12,7 +12,8 @@ RUN mkdir -p /out \
   && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/indexer ./cmd/indexer \
   && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/hedger ./cmd/hedger \
   && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/liquidator ./cmd/liquidator \
-  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/matcher ./cmd/matcher
+  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/matcher ./cmd/matcher \
+  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/fundingd ./cmd/fundingd
 
 FROM alpine:3.21
 

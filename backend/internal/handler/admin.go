@@ -3,6 +3,7 @@ package handler
 import (
 	"strconv"
 
+	appErr "github.com/AboAuther/RGPerp/backend/internal/pkg/errors"
 	"github.com/AboAuther/RGPerp/backend/internal/pkg/response"
 	"github.com/AboAuther/RGPerp/backend/internal/service"
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,19 @@ func (h *AdminHandler) Alerts(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"items": items})
+}
+
+func (h *AdminHandler) RetryHedgeTask(c *gin.Context) {
+	taskID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || taskID == 0 {
+		response.Fail(c, appErr.ErrBadRequest)
+		return
+	}
+	if err := h.adminService.RetryHedgeTask(taskID); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, gin.H{"id": taskID})
 }
 
 func parseLimit(c *gin.Context) int {

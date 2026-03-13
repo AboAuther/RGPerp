@@ -87,6 +87,17 @@ function formatCountdown(timestamp?: number): string {
   return [hours, minutes, seconds].map((item) => String(item).padStart(2, '0')).join(':')
 }
 
+function formatFundingCountdown(timestamp?: number): string {
+  if (!timestamp) {
+    return '未提供结算时间'
+  }
+  const diff = timestamp * 1000 - Date.now()
+  if (diff <= 0) {
+    return '结算中'
+  }
+  return `距下次结算 ${formatCountdown(timestamp)}`
+}
+
 function createDisplayDepth(mid: number, bestBid: number, bestAsk: number, tickSize: number) {
   if (!Number.isFinite(mid) || !Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || mid <= 0) {
     return { bids: [], asks: [], maxTotal: 0 }
@@ -549,6 +560,8 @@ export default function TradePage() {
   const takerFeeRate = Number(currentSymbol?.taker_fee_rate ?? 0)
   const estimatedFee = estimatedNotional * takerFeeRate
   const estimatedReserve = selectedOrderType === 'limit' && !selectedReduceOnly ? estimatedMargin + estimatedFee : 0
+  const fundingRate = Number(tickerQuery.data?.funding_rate ?? 0)
+  const estimatedFunding = estimatedNotional * fundingRate * (selectedSide === 'long' ? -1 : 1)
   const bestBid = Number(tickerQuery.data?.best_bid ?? 0)
   const bestAsk = Number(tickerQuery.data?.best_ask ?? 0)
   const depth = useMemo(
@@ -879,10 +892,9 @@ export default function TradePage() {
                   level={4}
                   style={{ margin: 0, color: Number(tickerQuery.data?.funding_rate ?? 0) >= 0 ? '#2ec9b0' : '#ff6b6b' }}
                 >
-                  {`${formatSignedAmount(Number(tickerQuery.data?.funding_rate ?? 0) * 100, 4)}%  ${formatCountdown(
-                    tickerQuery.data?.funding_next_at,
-                  )}`}
+                  {formatSignedAmount(Number(tickerQuery.data?.funding_rate ?? 0) * 100, 4)}%
                 </Typography.Title>
+                <Typography.Text type="secondary">{formatFundingCountdown(tickerQuery.data?.funding_next_at)}</Typography.Text>
               </Col>
             </Row>
           </Col>
@@ -1139,6 +1151,12 @@ export default function TradePage() {
                       <Descriptions.Item label="名义价值">{formatAmount(estimatedNotional, 2)} USDC</Descriptions.Item>
                       <Descriptions.Item label="预估开仓保证金">{formatAmount(estimatedMargin)} USDC</Descriptions.Item>
                       <Descriptions.Item label="预估手续费">{formatAmount(estimatedFee)} USDC ({formatAmount(takerFeeRate * 100, 4)}%)</Descriptions.Item>
+                      <Descriptions.Item label="预计下一次资金费用">
+                        <Typography.Text style={{ color: estimatedFunding >= 0 ? '#2ec9b0' : '#ff6b6b' }}>
+                          {formatSignedAmount(estimatedFunding, 6)} USDC
+                        </Typography.Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="下次资金结算">{formatFundingCountdown(tickerQuery.data?.funding_next_at)}</Descriptions.Item>
                       {selectedOrderType === 'limit' && !selectedReduceOnly ? (
                         <Descriptions.Item label="挂单冻结预算">{formatAmount(estimatedReserve)} USDC</Descriptions.Item>
                       ) : null}

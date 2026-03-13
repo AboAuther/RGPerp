@@ -13,6 +13,7 @@ type Config struct {
 	Redis       RedisConfig       `mapstructure:"redis"`
 	RabbitMQ    RabbitMQConfig    `mapstructure:"rabbitmq"`
 	JWT         JWTConfig         `mapstructure:"jwt"`
+	Admin       AdminConfig       `mapstructure:"admin"`
 	Blockchain  BlockchainConfig  `mapstructure:"blockchain"`
 	Hyperliquid HyperliquidConfig `mapstructure:"hyperliquid"`
 	Binance     BinanceConfig     `mapstructure:"binance"`
@@ -51,6 +52,10 @@ type RabbitMQConfig struct {
 type JWTConfig struct {
 	Secret      string `mapstructure:"secret"`
 	ExpireHours int    `mapstructure:"expire_hours"`
+}
+
+type AdminConfig struct {
+	Wallets []string `mapstructure:"wallets"`
 }
 
 type BlockchainConfig struct {
@@ -112,6 +117,7 @@ func Load() (*Config, error) {
 	cfg.RabbitMQ.URL = v.GetString("RABBITMQ_URL")
 	cfg.JWT.Secret = v.GetString("JWT_SECRET")
 	cfg.JWT.ExpireHours = v.GetInt("JWT_EXPIRE_HOURS")
+	cfg.Admin.Wallets = normalizeWallets(v.GetString("ADMIN_WALLETS"))
 	cfg.Blockchain.RPCURL = v.GetString("RPC_URL")
 	cfg.Blockchain.ChainID = v.GetInt64("CHAIN_ID")
 	cfg.Blockchain.VaultAddress = v.GetString("VAULT_ADDRESS")
@@ -153,6 +159,7 @@ func bindEnvMappings(v *viper.Viper) {
 		"REDIS_ADDR", "REDIS_PASSWORD", "REDIS_DB",
 		"RABBITMQ_URL",
 		"JWT_SECRET", "JWT_EXPIRE_HOURS",
+		"ADMIN_WALLETS",
 		"RPC_URL", "CHAIN_ID", "VAULT_ADDRESS", "USDC_ADDRESS", "OPERATOR_PRIVATE_KEY",
 		"HYPERLIQUID_API_URL", "HYPERLIQUID_WALLET_ADDRESS", "HYPERLIQUID_PRIVATE_KEY",
 		"BINANCE_FUTURES_API_URL",
@@ -162,4 +169,20 @@ func bindEnvMappings(v *viper.Viper) {
 	for _, key := range envKeys {
 		_ = v.BindEnv(key)
 	}
+}
+
+func normalizeWallets(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		wallet := strings.ToLower(strings.TrimSpace(part))
+		if wallet == "" {
+			continue
+		}
+		out = append(out, wallet)
+	}
+	return out
 }

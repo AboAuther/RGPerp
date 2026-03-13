@@ -9,6 +9,10 @@ import (
 )
 
 func (a *HyperliquidAdapter) PlaceOrder(ctx context.Context, req OrderRequest) (*OrderResult, error) {
+	slippageBps := req.SlippageBps
+	if slippageBps == 0 {
+		slippageBps = 75
+	}
 	resp, err := a.runBridge(ctx, map[string]any{
 		"action":         "order",
 		"api_url":        a.apiURL,
@@ -21,6 +25,7 @@ func (a *HyperliquidAdapter) PlaceOrder(ctx context.Context, req OrderRequest) (
 		"leverage":       5,
 		"is_cross":       true,
 		"reduce_only":    req.ReduceOnly,
+		"slippage_bps":   slippageBps,
 	})
 	if err != nil {
 		return nil, err

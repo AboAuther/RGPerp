@@ -23,6 +23,10 @@ export interface Account {
   asset: string
   available_balance: string
   locked_balance: string
+  net_deposits: string
+  settled_pnl_balance: string
+  unsettled_pnl_balance: string
+  payout_capacity: string
   pending_withdrawal: string
   withdrawable_balance: string
   unrealized_pnl: string
@@ -224,6 +228,17 @@ export interface DepositRecord {
   block_number: number
   amount: string
   status: string
+  created_at: string
+}
+
+export interface FundingHistoryItem {
+  symbol: string
+  side: 'long' | 'short'
+  funding_rate: string
+  mark_price: string
+  notional: string
+  amount: string
+  settlement_at: string
   created_at: string
 }
 

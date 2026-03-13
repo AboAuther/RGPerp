@@ -14,6 +14,9 @@ type RiskState struct {
 	Account             model.Account
 	PendingWithdrawal   decimal.Decimal
 	OpenOrderReserved   decimal.Decimal
+	NetDeposits         decimal.Decimal
+	SettledPnlBalance   decimal.Decimal
+	UnsettledPnlBalance decimal.Decimal
 	AvailableBalance    decimal.Decimal
 	LockedBalance       decimal.Decimal
 	UnrealizedPnL       decimal.Decimal
@@ -21,6 +24,7 @@ type RiskState struct {
 	TotalInitial        decimal.Decimal
 	TotalMaintenance    decimal.Decimal
 	FreeCollateral      decimal.Decimal
+	PayoutCapacity      decimal.Decimal
 	WithdrawableBalance decimal.Decimal
 	MarginRatio         decimal.Decimal
 	CrossMarginRatio    decimal.Decimal
@@ -116,9 +120,17 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 
 	riskBuffer := equity.Sub(totalMaintenance).Sub(pending).Sub(openOrderReserved)
 	maxWithdrawByAvailable := account.AvailableBalance.Sub(pending)
+	payoutCapacity := account.NetDeposits.Add(account.SettledPnlBalance).Sub(pending)
+	if IsAdminWallet(user.WalletAddress) {
+		payoutCapacity = maxWithdrawByAvailable
+	}
 	withdrawable := decimal.Min(maxWithdrawByAvailable, riskBuffer)
+	withdrawable = decimal.Min(withdrawable, payoutCapacity)
 	if withdrawable.IsNegative() {
 		withdrawable = decimal.Zero
+	}
+	if payoutCapacity.IsNegative() {
+		payoutCapacity = decimal.Zero
 	}
 
 	riskLevel := "normal"
@@ -138,6 +150,9 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		Account:             account,
 		PendingWithdrawal:   pending,
 		OpenOrderReserved:   openOrderReserved.Round(18),
+		NetDeposits:         account.NetDeposits.Round(18),
+		SettledPnlBalance:   account.SettledPnlBalance.Round(18),
+		UnsettledPnlBalance: account.UnsettledPnlBalance.Round(18),
 		AvailableBalance:    account.AvailableBalance,
 		LockedBalance:       account.LockedBalance,
 		UnrealizedPnL:       unrealized.Round(18),
@@ -145,6 +160,7 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		TotalInitial:        totalInitial.Round(18),
 		TotalMaintenance:    totalMaintenance.Round(18),
 		FreeCollateral:      freeCollateral.Round(18),
+		PayoutCapacity:      payoutCapacity.Round(18),
 		WithdrawableBalance: withdrawable.Round(18),
 		MarginRatio:         marginRatio,
 		CrossMarginRatio:    crossMarginRatio,

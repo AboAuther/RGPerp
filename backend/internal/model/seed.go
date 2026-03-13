@@ -89,3 +89,21 @@ func SeedInsuranceFund(db *gorm.DB) error {
 	}
 	return nil
 }
+
+func SeedSettlementPools(db *gorm.DB) error {
+	pools := []SettlementPool{
+		{Asset: "USDC", Balance: decimal.RequireFromString("100000")},
+	}
+
+	for _, item := range pools {
+		var count int64
+		db.Model(&SettlementPool{}).Where("asset = ?", item.Asset).Count(&count)
+		if count > 0 {
+			continue
+		}
+		if err := db.Create(&item).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}

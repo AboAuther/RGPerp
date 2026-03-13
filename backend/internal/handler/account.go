@@ -48,3 +48,18 @@ func (h *AccountHandler) Deposits(c *gin.Context) {
 	}
 	response.OK(c, gin.H{"items": items})
 }
+
+func (h *AccountHandler) FundingHistory(c *gin.Context) {
+	userIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.FailWithMsg(c, http.StatusUnauthorized, 10004, "unauthorized")
+		return
+	}
+
+	items, err := h.accountService.ListFundingHistory(userIDValue.(uint64), parseLimit(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}

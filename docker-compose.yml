@@ -115,6 +115,11 @@ services:
     container_name: rgperp-matcher
     command: ["/app/bin/matcher"]
 
+  fundingd:
+    <<: *backend-common
+    container_name: rgperp-fundingd
+    command: ["/app/bin/fundingd"]
+
 volumes:
   mysql_data:
   redis_data:

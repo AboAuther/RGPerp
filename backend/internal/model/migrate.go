@@ -16,6 +16,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&Order{},
 		&Trade{},
 		&Position{},
+		&FundingEvent{},
 		&VaultEvent{},
 		&WithdrawalRequest{},
 		&HedgeTask{},
@@ -24,6 +25,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&PriceTick{},
 		&SystemRiskSnapshot{},
 		&InsuranceFund{},
+		&SettlementPool{},
 	)
 }
 
@@ -40,6 +42,7 @@ func CreateCompositeIndexes(db *gorm.DB) error {
 		{"trades", "idx_trades_symbol_created", "symbol, created_at", false},
 		{"positions", "idx_positions_user_symbol_status", "user_id, symbol, status", false},
 		{"ledger_entries", "idx_ledger_ref", "reference_type, reference_id", false},
+		{"funding_events", "uq_funding_position_settlement", "position_id, settlement_at", true},
 		{"price_ticks", "idx_price_ticks_symbol_created", "symbol, created_at", false},
 		{"system_risk_snapshots", "idx_risk_snapshots_symbol_created", "symbol, created_at", false},
 	}

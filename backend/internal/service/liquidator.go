@@ -142,6 +142,9 @@ func (s *LiquidatorService) liquidateUser(userID uint64) error {
 			beforeBalance := account.AvailableBalance
 			account.AvailableBalance = account.AvailableBalance.Add(marginReleased).Add(realizedPnL).Sub(liquidationFee)
 			account.LockedBalance = account.LockedBalance.Sub(marginReleased)
+			if err := settleRealizedDelta(tx, &account, realizedPnL); err != nil {
+				return err
+			}
 
 			remainingSize := pos.Size.Sub(closeSize).Round(18)
 			remainingMargin := pos.Margin.Sub(marginReleased).Round(18)

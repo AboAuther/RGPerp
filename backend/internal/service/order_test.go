@@ -440,6 +440,42 @@ func TestOrderService_CreateHedgeTaskUsesLatestTargetWhenSnapshotLags(t *testing
 	}
 }
 
+func TestOrderService_CreateHedgeTaskIgnoresRiskSnapshotResidualWhenInternalNetIsZero(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if err := db.Create(&model.SystemRiskSnapshot{
+		Symbol:                "BTC-PERP",
+		TotalLongPosition:     decimal.Zero,
+		TotalShortPosition:    decimal.Zero,
+		NetPosition:           decimal.Zero,
+		ExternalHedgePosition: decimal.RequireFromString("-0.03038"),
+		Drift:                 decimal.RequireFromString("0.03038"),
+		HedgeHealthy:          false,
+		TotalOpenInterest:     decimal.Zero,
+	}).Error; err != nil {
+		t.Fatalf("create risk snapshot: %v", err)
+	}
+
+	if err := svc.createMockHedgeTask(db, "BTC-PERP", "trade", decimal.RequireFromString("72450")); err != nil {
+		t.Fatalf("create mock hedge task: %v", err)
+	}
+
+	var task model.HedgeTask
+	if err := db.Order("id desc").First(&task).Error; err != nil {
+		t.Fatalf("load latest task: %v", err)
+	}
+	if task.Status != "noop" {
+		t.Fatalf("expected noop hedge task, got %s", task.Status)
+	}
+	if !task.CurrentHedgePosition.IsZero() {
+		t.Fatalf("expected current hedge position 0, got %s", task.CurrentHedgePosition.String())
+	}
+	if !task.Drift.IsZero() {
+		t.Fatalf("expected drift 0, got %s", task.Drift.String())
+	}
+}
+
 func TestOrderService_CreateHedgeTaskSupersedesOlderBufferedTask(t *testing.T) {
 	db := mustNewOrderTestDB(t)
 	svc := NewOrderService(db)

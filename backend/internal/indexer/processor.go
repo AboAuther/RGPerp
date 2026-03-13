@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/AboAuther/RGPerp/backend/internal/model"
+	"github.com/AboAuther/RGPerp/backend/internal/service"
 )
 
 const vaultABI = `[
@@ -105,6 +106,7 @@ func (p *Processor) processDeposit(ctx context.Context, vLog gethtypes.Log) erro
 
 		before := account.AvailableBalance
 		account.AvailableBalance = account.AvailableBalance.Add(amount)
+		account.NetDeposits = account.NetDeposits.Add(amount)
 		if err := tx.Save(&account).Error; err != nil {
 			return err
 		}
@@ -181,6 +183,7 @@ func (p *Processor) processWithdraw(ctx context.Context, vLog gethtypes.Log) err
 				amount.String(), account.AvailableBalance.String(), userAddress)
 		}
 		account.AvailableBalance = account.AvailableBalance.Sub(amount)
+		service.ConsumeWithdrawalBacking(account, amount)
 		if err := tx.Save(&account).Error; err != nil {
 			return err
 		}

@@ -4,8 +4,10 @@ import (
 	"time"
 
 	"github.com/AboAuther/RGPerp/backend/internal/model"
+	appErr "github.com/AboAuther/RGPerp/backend/internal/pkg/errors"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type AdminService struct {
@@ -34,9 +36,9 @@ type AdminOverview struct {
 }
 
 type AdminDriftRow struct {
-	Symbol      string          `json:"symbol"`
-	Drift       decimal.Decimal `json:"drift"`
-	HedgeHealthy bool           `json:"hedge_healthy"`
+	Symbol       string          `json:"symbol"`
+	Drift        decimal.Decimal `json:"drift"`
+	HedgeHealthy bool            `json:"hedge_healthy"`
 }
 
 type AdminHedgeTaskItem struct {
@@ -179,14 +181,9 @@ func (s *AdminService) ListHedgeTasks(limit int) ([]AdminHedgeTaskItem, error) {
 		limit = 100
 	}
 
-	tasks, err := s.latestUnresolvedHedgeTasks(limit)
-	if err != nil {
+	var tasks []model.HedgeTask
+	if err := s.db.Where("trigger_type <> ?", "reconcile").Order("id desc").Limit(limit).Find(&tasks).Error; err != nil {
 		return nil, err
-	}
-	if len(tasks) == 0 {
-		if err := s.db.Where("trigger_type <> ?", "reconcile").Order("id desc").Limit(limit).Find(&tasks).Error; err != nil {
-			return nil, err
-		}
 	}
 	items := make([]AdminHedgeTaskItem, 0, len(tasks))
 	for _, task := range tasks {
@@ -212,6 +209,70 @@ func (s *AdminService) ListHedgeTasks(limit int) ([]AdminHedgeTaskItem, error) {
 		})
 	}
 	return items, nil
+}
+
+func (s *AdminService) RetryHedgeTask(taskID uint64) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var task model.HedgeTask
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", taskID).First(&task).Error; err != nil {
+			return err
+		}
+		if task.TriggerType == "reconcile" {
+			return appErr.ErrBadRequest
+		}
+		if task.Status == "completed" || task.Status == "noop" || task.Status == "superseded" {
+			return appErr.New(400, 90002, "hedge task cannot be retried in its current state")
+		}
+
+		var order model.HedgeOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("hedge_task_id = ?", task.ID).
+			Order("id desc").
+			First(&order).Error; err != nil {
+			return err
+		}
+
+		internalNet, err := loadInternalNetPosition(tx, task.Symbol)
+		if err != nil {
+			return err
+		}
+		currentManaged, err := loadProjectedManagedHedgePositionExcludingTask(tx, task.Symbol, task.ID)
+		if err != nil {
+			return err
+		}
+		target := internalNet.Round(18)
+		drift := target.Sub(currentManaged).Round(18)
+		status := "pending"
+		if drift.IsZero() {
+			status = "noop"
+		}
+
+		task.InternalNetPosition = internalNet
+		task.TargetHedgePosition = target
+		task.CurrentHedgePosition = currentManaged
+		task.Drift = drift
+		task.Status = status
+		task.ErrorMessage = ""
+		task.UpdatedAt = time.Now()
+
+		order.Status = status
+		if status == "noop" {
+			order.Status = "filled"
+			order.FilledSize = decimal.Zero
+		}
+		order.Side = "short"
+		if drift.GreaterThan(decimal.Zero) {
+			order.Side = "long"
+		}
+		order.Size = drift.Abs()
+		order.ErrorMessage = ""
+		order.UpdatedAt = time.Now()
+
+		if err := tx.Save(&order).Error; err != nil {
+			return err
+		}
+		return tx.Save(&task).Error
+	})
 }
 
 func (s *AdminService) ListRiskSnapshots(limit int) ([]AdminRiskSnapshotItem, error) {

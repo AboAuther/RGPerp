@@ -10,17 +10,25 @@ import (
 )
 
 type AccountService struct {
-	db *gorm.DB
+	db      *gorm.DB
+	funding *FundingService
 }
 
 func NewAccountService(db *gorm.DB) *AccountService {
-	return &AccountService{db: db}
+	return &AccountService{
+		db:      db,
+		funding: NewFundingService(db, nil),
+	}
 }
 
 type AccountOutput struct {
 	Asset               string          `json:"asset"`
 	AvailableBalance    decimal.Decimal `json:"available_balance"`
 	LockedBalance       decimal.Decimal `json:"locked_balance"`
+	NetDeposits         decimal.Decimal `json:"net_deposits"`
+	SettledPnlBalance   decimal.Decimal `json:"settled_pnl_balance"`
+	UnsettledPnlBalance decimal.Decimal `json:"unsettled_pnl_balance"`
+	PayoutCapacity      decimal.Decimal `json:"payout_capacity"`
 	PendingWithdrawal   decimal.Decimal `json:"pending_withdrawal"`
 	WithdrawableBalance decimal.Decimal `json:"withdrawable_balance"`
 	UnrealizedPnL       decimal.Decimal `json:"unrealized_pnl"`
@@ -37,6 +45,10 @@ type DepositRecordOutput struct {
 	Amount      decimal.Decimal `json:"amount"`
 	Status      string          `json:"status"`
 	CreatedAt   time.Time       `json:"created_at"`
+}
+
+func (s *AccountService) ListFundingHistory(userID uint64, limit int) ([]FundingHistoryItem, error) {
+	return s.funding.ListFundingHistory(userID, limit)
 }
 
 func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
@@ -56,6 +68,10 @@ func (s *AccountService) GetAccount(userID uint64) (*AccountOutput, error) {
 		Asset:               "USDC",
 		AvailableBalance:    riskState.AvailableBalance,
 		LockedBalance:       riskState.LockedBalance,
+		NetDeposits:         riskState.NetDeposits,
+		SettledPnlBalance:   riskState.SettledPnlBalance,
+		UnsettledPnlBalance: riskState.UnsettledPnlBalance,
+		PayoutCapacity:      riskState.PayoutCapacity,
 		PendingWithdrawal:   riskState.PendingWithdrawal,
 		WithdrawableBalance: riskState.WithdrawableBalance,
 		UnrealizedPnL:       riskState.UnrealizedPnL,

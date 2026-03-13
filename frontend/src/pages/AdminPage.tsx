@@ -1,6 +1,6 @@
-import { Alert, Card, Col, Row, Space, Table, Tag, Typography } from 'antd'
-import { useQuery } from '@tanstack/react-query'
-import { get } from '../services/api'
+import { Alert, Button, Card, Col, Row, Space, Table, Tag, Typography, message } from 'antd'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { get, getErrorMessage, post } from '../services/api'
 import type {
   AdminAlertItem,
   AdminHedgeTaskItem,
@@ -69,6 +69,7 @@ function formatDriftSummary(overview?: AdminOverview) {
 }
 
 export default function AdminPage() {
+  const queryClient = useQueryClient()
   const overviewQuery = useQuery({
     queryKey: ['admin-overview'],
     queryFn: async () => (await get<AdminOverview>('/admin/overview')).data!,
@@ -83,7 +84,7 @@ export default function AdminPage() {
 
   const hedgeTasksQuery = useQuery({
     queryKey: ['admin-hedge-tasks'],
-    queryFn: async () => (await get<{ items: AdminHedgeTaskItem[] }>('/admin/hedge-tasks', { limit: 10 })).data?.items ?? [],
+    queryFn: async () => (await get<{ items: AdminHedgeTaskItem[] }>('/admin/hedge-tasks', { limit: 50 })).data?.items ?? [],
     refetchInterval: 4000,
   })
 
@@ -97,6 +98,19 @@ export default function AdminPage() {
     queryKey: ['admin-liquidations'],
     queryFn: async () => (await get<{ items: AdminLiquidationItem[] }>('/admin/liquidations', { limit: 10 })).data?.items ?? [],
     refetchInterval: 4000,
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: async (taskId: number) => post(`/admin/hedge-tasks/${taskId}/retry`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-overview'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-alerts'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-hedge-tasks'] })
+      message.success('已重新提交对冲任务')
+    },
+    onError: (error) => {
+      message.error(getErrorMessage(error, '重试对冲任务失败'))
+    },
   })
 
   const overview = overviewQuery.data
@@ -194,7 +208,33 @@ export default function AdminPage() {
                 { title: '偏差', dataIndex: 'drift', key: 'drift', width: 92, render: (v: string) => formatAmount(v, 4) },
                 { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v: string) => <Tag color={hedgeStatusColor(v)}>{v}</Tag> },
                 { title: '外部单', dataIndex: 'last_order_status', key: 'last_order_status', width: 90, render: (v: string) => <Tag>{v || '-'}</Tag> },
+                {
+                  title: '操作',
+                  key: 'actions',
+                  width: 96,
+                  render: (_: unknown, record: AdminHedgeTaskItem) =>
+                    record.status === 'failed' ? (
+                      <Button
+                        size="small"
+                        onClick={() => retryMutation.mutate(record.id)}
+                        loading={retryMutation.isPending}
+                      >
+                        重试
+                      </Button>
+                    ) : '--',
+                },
               ]}
+              expandable={{
+                expandedRowRender: (record) => (
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text type="secondary">错误信息：{record.error_message || '--'}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      外部方向：{record.last_order_side || '--'} / 数量：{formatAmount(record.last_order_size, 6)} / 价格：{formatAmount(record.last_order_price, 2)} / 自动重试次数：{record.last_order_retry_count ?? 0}
+                    </Typography.Text>
+                  </Space>
+                ),
+                rowExpandable: (record) => Boolean(record.error_message || record.last_order_side),
+              }}
             />
           </Card>
         </Col>

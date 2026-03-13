@@ -16,11 +16,12 @@ import (
 )
 
 type OrderRequest struct {
-	Symbol     string
-	Side       string
-	Size       decimal.Decimal
-	Price      decimal.Decimal
-	ReduceOnly bool
+	Symbol      string
+	Side        string
+	Size        decimal.Decimal
+	Price       decimal.Decimal
+	SlippageBps uint32
+	ReduceOnly  bool
 }
 
 type OrderResult struct {

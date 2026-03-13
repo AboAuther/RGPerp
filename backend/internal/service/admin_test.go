@@ -23,7 +23,7 @@ func TestAdminService_OverviewAndLists(t *testing.T) {
 		t.Fatalf("expected 1 trading symbol, got %d", overview.TradingSymbols)
 	}
 	if overview.PendingHedges != 0 {
-		t.Fatalf("expected 0 pending hedges after latest-task filtering, got %d", overview.PendingHedges)
+		t.Fatalf("expected 0 pending hedges after current-task aggregation, got %d", overview.PendingHedges)
 	}
 	if overview.BufferedHedges != 1 {
 		t.Fatalf("expected 1 buffered hedge, got %d", overview.BufferedHedges)
@@ -36,11 +36,11 @@ func TestAdminService_OverviewAndLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list hedge tasks: %v", err)
 	}
-	if len(hedges) != 1 {
-		t.Fatalf("expected 1 current unresolved hedge task, got %d", len(hedges))
+	if len(hedges) != 2 {
+		t.Fatalf("expected 2 hedge task history rows, got %d", len(hedges))
 	}
 	if hedges[0].Status != "buffered" {
-		t.Fatalf("expected latest unresolved hedge task to be buffered, got %s", hedges[0].Status)
+		t.Fatalf("expected latest hedge task to be buffered, got %s", hedges[0].Status)
 	}
 
 	snapshots, err := svc.ListRiskSnapshots(10)
@@ -65,6 +65,38 @@ func TestAdminService_OverviewAndLists(t *testing.T) {
 	}
 	if len(alerts) == 0 {
 		t.Fatal("expected alerts")
+	}
+}
+
+func TestAdminService_RetryHedgeTask(t *testing.T) {
+	db := mustNewAdminTestDB(t)
+	svc := NewAdminService(db)
+
+	var task model.HedgeTask
+	if err := db.Where("status = ?", "buffered").Order("id desc").First(&task).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+
+	if err := svc.RetryHedgeTask(task.ID); err != nil {
+		t.Fatalf("retry hedge task: %v", err)
+	}
+
+	if err := db.First(&task, task.ID).Error; err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if task.Status != "noop" {
+		t.Fatalf("expected task noop after retry rebases on latest managed state, got %s", task.Status)
+	}
+	if !task.Drift.IsZero() {
+		t.Fatalf("expected drift zero after retry, got %s", task.Drift.String())
+	}
+
+	var order model.HedgeOrder
+	if err := db.Where("hedge_task_id = ?", task.ID).Order("id desc").First(&order).Error; err != nil {
+		t.Fatalf("reload order: %v", err)
+	}
+	if order.Status != "filled" {
+		t.Fatalf("expected order filled after noop retry, got %s", order.Status)
 	}
 }
 

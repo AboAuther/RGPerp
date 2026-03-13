@@ -189,6 +189,68 @@ func TestService_ProcessPending_BuffersSmallNotionalForHyperliquid(t *testing.T)
 	}
 }
 
+type positionMismatchAdapter struct{}
+
+func (positionMismatchAdapter) PlaceOrder(context.Context, OrderRequest) (*OrderResult, error) {
+	return &OrderResult{
+		ExternalOrderID: "live-fill",
+		Status:          "filled",
+		FilledSize:      decimal.RequireFromString("0.01"),
+		FilledPrice:     decimal.RequireFromString("85000"),
+	}, nil
+}
+
+func (positionMismatchAdapter) GetPosition(context.Context, string) (decimal.Decimal, error) {
+	return decimal.RequireFromString("9.99"), nil
+}
+
+func (positionMismatchAdapter) MinOrderNotional(string) decimal.Decimal {
+	return decimal.Zero
+}
+
+func TestService_ProcessPending_IgnoresLiveExternalPositionForExecutionDelta(t *testing.T) {
+	db := mustNewHedgeTestDB(t)
+
+	task := model.HedgeTask{
+		Symbol:               "BTC-PERP",
+		TriggerType:          "trade",
+		InternalNetPosition:  decimal.RequireFromString("0.01"),
+		TargetHedgePosition:  decimal.RequireFromString("0.01"),
+		CurrentHedgePosition: decimal.Zero,
+		Drift:                decimal.RequireFromString("0.01"),
+		Status:               "pending",
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	order := model.HedgeOrder{
+		HedgeTaskID: task.ID,
+		Symbol:      "BTC-PERP",
+		Side:        "long",
+		Size:        decimal.RequireFromString("0.01"),
+		Price:       decimal.RequireFromString("85000"),
+		Status:      "pending",
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), positionMismatchAdapter{})
+	if err := svc.processPending(context.Background()); err != nil {
+		t.Fatalf("process pending: %v", err)
+	}
+
+	if err := db.First(&task, task.ID).Error; err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if !task.CurrentHedgePosition.Equal(decimal.RequireFromString("0.01")) {
+		t.Fatalf("expected managed hedge position to become 0.01, got %s", task.CurrentHedgePosition.String())
+	}
+	if !task.Drift.IsZero() {
+		t.Fatalf("expected drift to clear, got %s", task.Drift.String())
+	}
+}
+
 func mustNewHedgeTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

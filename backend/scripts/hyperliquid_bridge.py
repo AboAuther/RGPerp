@@ -6,6 +6,7 @@ from typing import Any
 from eth_account import Account
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
+from hyperliquid.utils.signing import OrderType
 
 
 EMPTY_SPOT_META = {"universe": [], "tokens": []}
@@ -30,6 +31,17 @@ def parse_filled(data: dict[str, Any]) -> tuple[str, str, str]:
 
 def coin_for_symbol(symbol: str) -> str:
     return symbol.split("-")[0].split("/")[0].upper()
+
+
+def load_mid_price(info: Info, coin: str) -> float:
+    mids = info.all_mids()
+    raw = mids.get(coin)
+    if raw is None:
+        raise RuntimeError(f"missing mid price for coin={coin}")
+    mid = float(raw)
+    if mid <= 0:
+        raise RuntimeError(f"invalid mid price for coin={coin}: {raw}")
+    return mid
 
 
 def main() -> None:
@@ -58,17 +70,22 @@ def main() -> None:
 
     if action == "order":
         wallet = Account.from_key(private_key)
+        info = Info(api_url, skip_ws=True, spot_meta=EMPTY_SPOT_META)
         exchange = Exchange(wallet, api_url, spot_meta=EMPTY_SPOT_META)
         leverage = int(payload.get("leverage", 5))
         is_cross = bool(payload.get("is_cross", True))
         reduce_only = bool(payload.get("reduce_only", False))
+        slippage_bps = float(payload.get("slippage_bps", 35))
         exchange.update_leverage(leverage, coin, is_cross=is_cross)
         is_buy = str(payload["side"]).lower() == "long"
         size = float(payload["size"])
-        if reduce_only:
-            result = exchange.market_close(coin, size)
-        else:
-            result = exchange.market_open(coin, is_buy, size)
+        if size <= 0:
+            raise RuntimeError("size must be positive")
+
+        mid_price = load_mid_price(info, coin)
+        limit_px = exchange._slippage_price(coin, is_buy, slippage_bps / 10000.0, px=mid_price)
+        order_type = OrderType({"limit": {"tif": "Ioc"}})
+        result = exchange.order(coin, is_buy, size, limit_px, order_type, reduce_only=reduce_only)
         oid, filled_size, filled_price = parse_filled(result)
         emit(
             {
@@ -77,6 +94,8 @@ def main() -> None:
                 "order_status": "filled",
                 "filled_size": filled_size,
                 "filled_price": filled_price,
+                "mid_price": str(mid_price),
+                "limit_price": str(limit_px),
                 "raw": result,
             }
         )

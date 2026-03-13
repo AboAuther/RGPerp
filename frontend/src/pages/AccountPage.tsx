@@ -27,6 +27,7 @@ import type {
   AuthLogin,
   DepositRecord,
   DepositInfo,
+  FundingHistoryItem,
   WithdrawalRequest,
 } from '../types'
 
@@ -205,6 +206,15 @@ export default function AccountPage() {
     queryKey: ['deposits', token],
     queryFn: async () => {
       const res = await get<{ items: DepositRecord[] }>('/deposits')
+      return res.data?.items ?? []
+    },
+    enabled: authenticated,
+  })
+
+  const fundingHistoryQuery = useQuery({
+    queryKey: ['funding-history', token],
+    queryFn: async () => {
+      const res = await get<{ items: FundingHistoryItem[] }>('/funding-history', { limit: 20 })
       return res.data?.items ?? []
     },
     enabled: authenticated,
@@ -564,6 +574,52 @@ export default function AccountPage() {
     [],
   )
 
+  const fundingColumns = useMemo(
+    () => [
+      {
+        title: '结算时间',
+        dataIndex: 'settlement_at',
+        key: 'settlement_at',
+        render: (value: string) => new Date(value).toLocaleString(),
+      },
+      {
+        title: '交易对',
+        dataIndex: 'symbol',
+        key: 'symbol',
+        render: (value: string) => value.replace('-PERP', '/USDC'),
+      },
+      {
+        title: '方向',
+        dataIndex: 'side',
+        key: 'side',
+        render: (value: string) => <Tag color={value === 'long' ? 'green' : 'red'}>{value}</Tag>,
+      },
+      {
+        title: '资金费率',
+        dataIndex: 'funding_rate',
+        key: 'funding_rate',
+        render: (value: string) => `${formatAmount(Number(value) * 100, 4)}%`,
+      },
+      {
+        title: '名义价值',
+        dataIndex: 'notional',
+        key: 'notional',
+        render: (value: string) => `${formatAmount(value)} USDC`,
+      },
+      {
+        title: '结算金额',
+        dataIndex: 'amount',
+        key: 'amount',
+        render: (value: string) => (
+          <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>
+            {formatAmount(value)} USDC
+          </Typography.Text>
+        ),
+      },
+    ],
+    [],
+  )
+
   return (
     <div className="rg-app-page rg-app-page--account">
       {contextHolder}
@@ -668,12 +724,47 @@ export default function AccountPage() {
                   minHeight={132}
                 />
               </Col>
+              <Col span={12}>
+                <MetricCard
+                  title="链上净入金"
+                  value={formatAmount(accountQuery.data?.net_deposits)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
+              </Col>
+              <Col span={12}>
+                <MetricCard
+                  title="已结算盈利"
+                  value={formatAmount(accountQuery.data?.settled_pnl_balance)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
+              </Col>
+              <Col span={12}>
+                <MetricCard
+                  title="待结算盈利"
+                  value={formatAmount(accountQuery.data?.unsettled_pnl_balance)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
+              </Col>
+              <Col span={12}>
+                <MetricCard
+                  title="可兑付额度"
+                  value={formatAmount(accountQuery.data?.payout_capacity)}
+                  suffix="USDC"
+                  minHeight={132}
+                />
+              </Col>
             </Row>
 
             <Descriptions column={1} size="small">
               <Descriptions.Item label="资产">{accountQuery.data?.asset ?? 'USDC'}</Descriptions.Item>
               <Descriptions.Item label="待提现占用">{formatAmount(accountQuery.data?.pending_withdrawal)} USDC</Descriptions.Item>
               <Descriptions.Item label="维持保证金">{formatAmount(accountQuery.data?.maintenance_margin)} USDC</Descriptions.Item>
+              <Descriptions.Item label="提现口径说明">
+                可提现余额受风控和平台可兑付额度双重限制。未实现盈亏与未结算盈利不会直接进入链上提现额度。
+              </Descriptions.Item>
               <Descriptions.Item label="风险等级">
                 <Tag color={riskState.color}>
                   {riskState.label}
@@ -842,6 +933,29 @@ export default function AccountPage() {
             scroll={{ x: 960 }}
           />
         </Card>
+        )
+      ) : null}
+
+      {authenticated ? (
+        fundingHistoryQuery.isError ? (
+          <Alert
+            style={{ marginTop: 24 }}
+            type="error"
+            showIcon
+            message="资金费率记录加载失败"
+            description="请检查后端 funding worker 和 `/api/v1/funding-history` 接口是否正常。"
+          />
+        ) : (
+          <Card style={{ marginTop: 24 }} title="资金费率记录" className="rg-glass-card">
+            <Table
+              rowKey={(record) => `${record.symbol}-${record.settlement_at}-${record.created_at}`}
+              loading={fundingHistoryQuery.isLoading}
+              dataSource={fundingHistoryQuery.data ?? []}
+              columns={fundingColumns}
+              pagination={false}
+              scroll={{ x: 960 }}
+            />
+          </Card>
         )
       ) : null}
     </div>

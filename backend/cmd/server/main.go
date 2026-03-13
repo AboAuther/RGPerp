@@ -54,6 +54,13 @@ func main() {
 	if err := model.SeedInsuranceFund(db); err != nil {
 		logger.Warn("failed to seed insurance fund", zap.Error(err))
 	}
+	if err := model.SeedSettlementPools(db); err != nil {
+		logger.Warn("failed to seed settlement pools", zap.Error(err))
+	}
+	service.SetAdminWallets(cfg.Admin.Wallets)
+	if err := service.BackfillAccountSettlementState(db); err != nil {
+		logger.Warn("failed to backfill account settlement state", zap.Error(err))
+	}
 	logger.Info("database migration and seed completed")
 
 	rds := initRedis(cfg)

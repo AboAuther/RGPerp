@@ -518,6 +518,9 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 
 				account.AvailableBalance = account.AvailableBalance.Add(marginReleased).Add(realizedPnL).Sub(fee)
 				account.LockedBalance = account.LockedBalance.Sub(marginReleased)
+				if err := settleRealizedDelta(tx, &account, realizedPnL); err != nil {
+					return err
+				}
 
 				remainingSize := existing.Size.Sub(closeSize)
 				remainingMargin := existing.Margin.Sub(marginReleased)
@@ -1166,25 +1169,16 @@ func (s *OrderService) positionEffectiveMargin(tx *gorm.DB, account model.Accoun
 }
 
 func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType string, markPrice decimal.Decimal) error {
-	var positions []model.Position
-	if err := tx.Where("symbol = ? AND status = ?", symbol, "open").Find(&positions).Error; err != nil {
-		return err
-	}
-
-	internalNet := decimal.Zero
-	for _, pos := range positions {
-		if pos.Side == "long" {
-			internalNet = internalNet.Add(pos.Size)
-		} else {
-			internalNet = internalNet.Sub(pos.Size)
-		}
-	}
-	target := internalNet.Round(18)
-	currentExternal, err := loadProjectedExternalPosition(tx, symbol)
+	internalNet, err := loadInternalNetPosition(tx, symbol)
 	if err != nil {
 		return err
 	}
-	drift := target.Sub(currentExternal).Round(18)
+	target := internalNet.Round(18)
+	currentManaged, err := loadProjectedManagedHedgePosition(tx, symbol)
+	if err != nil {
+		return err
+	}
+	drift := target.Sub(currentManaged).Round(18)
 	status := "noop"
 	side := ""
 	size := drift.Abs()
@@ -1202,7 +1196,7 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 		TriggerType:          triggerType,
 		InternalNetPosition:  internalNet,
 		TargetHedgePosition:  target,
-		CurrentHedgePosition: currentExternal,
+		CurrentHedgePosition: currentManaged,
 		Drift:                drift,
 		Status:               status,
 	}
@@ -1226,6 +1220,23 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 	}).Error
 }
 
+func loadInternalNetPosition(tx *gorm.DB, symbol string) (decimal.Decimal, error) {
+	var positions []model.Position
+	if err := tx.Where("symbol = ? AND status = ?", symbol, "open").Find(&positions).Error; err != nil {
+		return decimal.Zero, err
+	}
+
+	internalNet := decimal.Zero
+	for _, pos := range positions {
+		if pos.Side == "long" {
+			internalNet = internalNet.Add(pos.Size)
+		} else {
+			internalNet = internalNet.Sub(pos.Size)
+		}
+	}
+	return internalNet, nil
+}
+
 func supersedeOlderHedgeTasks(tx *gorm.DB, symbol string, keepTaskID uint64) error {
 	activeStatuses := []string{"pending", "retrying", "buffered", "failed"}
 	if err := tx.Model(&model.HedgeTask{}).
@@ -1245,22 +1256,26 @@ func supersedeOlderHedgeTasks(tx *gorm.DB, symbol string, keepTaskID uint64) err
 		}).Error
 }
 
-func loadProjectedExternalPosition(tx *gorm.DB, symbol string) (decimal.Decimal, error) {
+func loadProjectedManagedHedgePosition(tx *gorm.DB, symbol string) (decimal.Decimal, error) {
+	return loadProjectedManagedHedgePositionExcludingTask(tx, symbol, 0)
+}
+
+func loadProjectedManagedHedgePositionExcludingTask(tx *gorm.DB, symbol string, excludeTaskID uint64) (decimal.Decimal, error) {
+	query := tx.Where("symbol = ?", symbol)
+	if excludeTaskID > 0 {
+		query = query.Where("id <> ?", excludeTaskID)
+	}
+
 	var lastTask model.HedgeTask
-	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastTask).Error; err == nil {
+	if err := query.Order("id desc").First(&lastTask).Error; err == nil {
 		switch lastTask.Status {
 		case "pending", "retrying", "completed", "noop":
 			return lastTask.TargetHedgePosition, nil
+		case "buffered", "failed":
+			return lastTask.CurrentHedgePosition, nil
 		default:
 			return lastTask.CurrentHedgePosition, nil
 		}
-	} else if err != gorm.ErrRecordNotFound {
-		return decimal.Zero, err
-	}
-
-	var lastSnapshot model.SystemRiskSnapshot
-	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastSnapshot).Error; err == nil {
-		return lastSnapshot.ExternalHedgePosition, nil
 	} else if err != gorm.ErrRecordNotFound {
 		return decimal.Zero, err
 	}

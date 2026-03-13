@@ -89,12 +89,8 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			return tx.Save(&task).Error
 		}
 
-		currentExternal, err := s.adapter.GetPosition(ctx, task.Symbol)
-		if err != nil {
-			return err
-		}
-		task.CurrentHedgePosition = currentExternal
-		delta := task.TargetHedgePosition.Sub(currentExternal).Round(18)
+		currentManaged := task.CurrentHedgePosition
+		delta := task.TargetHedgePosition.Sub(currentManaged).Round(18)
 		task.Drift = delta
 		if delta.Abs().LessThanOrEqual(decimal.RequireFromString("0.0001")) {
 			task.Status = "completed"
@@ -130,16 +126,13 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 			}
 			return tx.Save(&task).Error
 		}
-		reduceOnly := !currentExternal.IsZero() &&
-			currentExternal.Sign() != delta.Sign() &&
-			delta.Abs().LessThanOrEqual(currentExternal.Abs())
-
 		result, err := s.adapter.PlaceOrder(ctx, OrderRequest{
-			Symbol:     task.Symbol,
-			Side:       order.Side,
-			Size:       order.Size,
-			Price:      order.Price,
-			ReduceOnly: reduceOnly,
+			Symbol:      task.Symbol,
+			Side:        order.Side,
+			Size:        order.Size,
+			Price:       order.Price,
+			SlippageBps: hedgeSlippageBps(order.RetryCount),
+			ReduceOnly:  false,
 		})
 		if err != nil {
 			order.RetryCount++
@@ -170,7 +163,7 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 		if order.Side == "short" {
 			actualFilled = actualFilled.Neg()
 		}
-		task.CurrentHedgePosition = currentExternal.Add(actualFilled)
+		task.CurrentHedgePosition = currentManaged.Add(actualFilled)
 		task.Drift = task.TargetHedgePosition.Sub(task.CurrentHedgePosition).Round(18)
 
 		if task.Drift.Abs().LessThanOrEqual(decimal.RequireFromString("0.0001")) {
@@ -186,6 +179,11 @@ func (s *Service) processTask(ctx context.Context, taskID uint64) error {
 		task.ErrorMessage = ""
 		return tx.Save(&task).Error
 	})
+}
+
+func hedgeSlippageBps(retryCount uint32) uint32 {
+	_ = retryCount
+	return 100
 }
 
 func (s *Service) captureRiskSnapshots() error {
