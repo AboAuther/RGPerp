@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { App as AntdApp, ConfigProvider, theme } from 'antd'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect } from 'react'
@@ -9,6 +9,8 @@ import AdminPage from './pages/AdminPage'
 import LandingPage from './pages/LandingPage'
 import DocsPage from './pages/DocsPage'
 import { useThemeStore } from './stores/themeStore'
+import { useAuthStore } from './stores/authStore'
+import { isAdminWallet } from './utils/adminAccess'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,6 +21,14 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+function AdminRoute() {
+  const { walletAddress, isAuthenticated } = useAuthStore()
+  if (!isAuthenticated() || !isAdminWallet(walletAddress)) {
+    return <Navigate to="/app" replace />
+  }
+  return <AdminPage />
+}
 
 export default function App() {
   const { mode } = useThemeStore()
@@ -77,7 +87,7 @@ export default function App() {
               <Route path="/app" element={<AppLayout />}>
                 <Route index element={<TradePage />} />
                 <Route path="account" element={<AccountPage />} />
-                <Route path="admin" element={<AdminPage />} />
+                <Route path="admin" element={<AdminRoute />} />
               </Route>
             </Routes>
           </BrowserRouter>

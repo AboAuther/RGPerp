@@ -9,24 +9,27 @@ import {
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/themeStore'
 import BrandLogo from '../brand/BrandLogo'
+import { useAuthStore } from '../../stores/authStore'
+import { isAdminWallet } from '../../utils/adminAccess'
 
 const { Header, Content, Footer } = Layout
-
-const menuItems = [
-  { key: '/app', icon: <LineChartOutlined />, label: '交易' },
-  { key: '/app/account', icon: <WalletOutlined />, label: '资产' },
-  { key: '/app/admin', icon: <DashboardOutlined />, label: '管理' },
-]
 
 export default function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { token } = theme.useToken()
   const { mode, toggleMode } = useThemeStore()
+  const { walletAddress, isAuthenticated } = useAuthStore()
   const isDark = mode === 'dark'
+  const canAccessAdmin = isAuthenticated() && isAdminWallet(walletAddress)
+  const menuItems = [
+    { key: '/app', icon: <LineChartOutlined />, label: '交易' },
+    { key: '/app/account', icon: <WalletOutlined />, label: '资产' },
+    ...(canAccessAdmin ? [{ key: '/app/admin', icon: <DashboardOutlined />, label: '管理' }] : []),
+  ]
   const selectedMenuKey = location.pathname.startsWith('/app/account')
     ? '/app/account'
-    : location.pathname.startsWith('/app/admin')
+    : canAccessAdmin && location.pathname.startsWith('/app/admin')
       ? '/app/admin'
       : '/app'
 
