@@ -138,7 +138,14 @@ func (s *LiquidatorService) liquidateUser(userID uint64) error {
 				pos.Size = remainingSize
 				pos.Margin = remainingMargin
 				pos.MarkPrice = execPrice
-				pos.LiquidationPrice = calculateLiquidationPrice(pos.Side, pos.MarginMode, pos.EntryPrice, pos.Size, pos.Margin, sym.MaintenanceMarginRate)
+				pos.LiquidationPrice = calculateLiquidationPrice(
+					pos.Side,
+					pos.MarginMode,
+					pos.EntryPrice,
+					pos.Size,
+					pos.Margin,
+					effectiveMaintenanceRate(sym.InitialMarginRate, sym.MaintenanceMarginRate, pos.Leverage),
+				)
 			}
 			if err := tx.Save(&pos).Error; err != nil {
 				return err

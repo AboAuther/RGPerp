@@ -137,6 +137,131 @@ func TestOrderService_ReduceOnlyRiskBlocksIncreasingExposure(t *testing.T) {
 	}
 }
 
+func TestOrderService_TestModeAllowsHighLeverage(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if _, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "test-mode-1000x",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      1000,
+		TestMode:      true,
+	}); err != nil {
+		t.Fatalf("expected test mode order to pass, got %v", err)
+	}
+}
+
+func TestOrderService_HighLeverageRejectedWithoutTestMode(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	_, err := svc.Create(CreateOrderInput{
+		UserID:        1,
+		ClientOrderID: "normal-1000x",
+		Symbol:        "BTC-PERP",
+		Side:          "long",
+		Type:          "market",
+		MarginMode:    "isolated",
+		Size:          decimal.RequireFromString("0.001"),
+		Leverage:      1000,
+	})
+	if err == nil {
+		t.Fatal("expected invalid leverage error")
+	}
+	if err != apperr.ErrInvalidLeverage {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectiveMaintenanceRate_NormalLeverageUnchanged(t *testing.T) {
+	initialRate := decimal.RequireFromString("0.04")
+	maintenanceRate := decimal.RequireFromString("0.01")
+
+	got := effectiveMaintenanceRate(initialRate, maintenanceRate, 10)
+	if !got.Equal(maintenanceRate) {
+		t.Fatalf("expected maintenance rate %s, got %s", maintenanceRate, got)
+	}
+}
+
+func TestEffectiveMaintenanceRate_TestLeverageScalesDown(t *testing.T) {
+	initialRate := decimal.RequireFromString("0.04")
+	maintenanceRate := decimal.RequireFromString("0.01")
+
+	got := effectiveMaintenanceRate(initialRate, maintenanceRate, 1000)
+	want := decimal.RequireFromString("0.0005")
+	if !got.Equal(want) {
+		t.Fatalf("expected maintenance rate %s, got %s", want, got)
+	}
+}
+
+func TestCalculateLiquidationPrice_LongTestLeverageStaysBelowEntry(t *testing.T) {
+	entry := decimal.RequireFromString("89.46")
+	size := decimal.RequireFromString("0.2")
+	margin := decimal.RequireFromString("0.017892")
+	maintenanceRate := effectiveMaintenanceRate(
+		decimal.RequireFromString("0.04"),
+		decimal.RequireFromString("0.01"),
+		1000,
+	)
+
+	liq := calculateLiquidationPrice("long", "isolated", entry, size, margin, maintenanceRate)
+	if !liq.LessThan(entry) {
+		t.Fatalf("expected liquidation price below entry, entry=%s liq=%s", entry, liq)
+	}
+}
+
+func TestOrderService_CreateHedgeTaskUsesLatestTargetWhenSnapshotLags(t *testing.T) {
+	db := mustNewOrderTestDB(t)
+	svc := NewOrderService(db)
+
+	if err := db.Create(&model.HedgeTask{
+		Symbol:               "BTC-PERP",
+		TriggerType:          "trade",
+		InternalNetPosition:  decimal.RequireFromString("0.001"),
+		TargetHedgePosition:  decimal.RequireFromString("0.001"),
+		CurrentHedgePosition: decimal.RequireFromString("0.001"),
+		Drift:                decimal.Zero,
+		Status:               "completed",
+	}).Error; err != nil {
+		t.Fatalf("create hedge task: %v", err)
+	}
+	if err := db.Create(&model.SystemRiskSnapshot{
+		Symbol:                "BTC-PERP",
+		TotalLongPosition:     decimal.Zero,
+		TotalShortPosition:    decimal.Zero,
+		NetPosition:           decimal.Zero,
+		ExternalHedgePosition: decimal.Zero,
+		Drift:                 decimal.Zero,
+		HedgeHealthy:          true,
+		TotalOpenInterest:     decimal.Zero,
+	}).Error; err != nil {
+		t.Fatalf("create risk snapshot: %v", err)
+	}
+
+	if err := svc.createMockHedgeTask(db, "BTC-PERP", "liquidation", decimal.RequireFromString("86000")); err != nil {
+		t.Fatalf("create mock hedge task: %v", err)
+	}
+
+	var task model.HedgeTask
+	if err := db.Order("id desc").First(&task).Error; err != nil {
+		t.Fatalf("load latest task: %v", err)
+	}
+	if task.TriggerType != "liquidation" {
+		t.Fatalf("unexpected trigger type: %s", task.TriggerType)
+	}
+	if task.Status != "pending" {
+		t.Fatalf("expected pending hedge task, got %s", task.Status)
+	}
+	if !task.Drift.Equal(decimal.RequireFromString("-0.001")) {
+		t.Fatalf("unexpected drift: %s", task.Drift.String())
+	}
+}
+
 func mustNewOrderTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

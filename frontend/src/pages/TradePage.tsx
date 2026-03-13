@@ -87,6 +87,110 @@ function formatCountdown(timestamp?: number): string {
   return [hours, minutes, seconds].map((item) => String(item).padStart(2, '0')).join(':')
 }
 
+function riskMeta(level?: string) {
+  switch ((level ?? '').toLowerCase()) {
+    case 'active':
+    case 'normal':
+      return { label: '正常', color: 'green' as const, message: '账户风险状态正常，可正常交易。', type: 'success' as const }
+    case 'at_risk':
+      return { label: '风险上升', color: 'gold' as const, message: '账户已接近风控阈值，建议主动减仓或补充保证金。', type: 'warning' as const }
+    case 'reduce_only':
+      return { label: '只减仓', color: 'orange' as const, message: '账户已进入只减仓状态，暂时不能继续增加风险敞口。', type: 'warning' as const }
+    case 'liquidating':
+      return { label: '强平中', color: 'red' as const, message: '账户已进入强平流程，系统会自动减仓或全平风险仓位。', type: 'error' as const }
+    case 'frozen':
+      return { label: '冻结', color: 'magenta' as const, message: '账户已被冻结，请先排查风控或权限问题。', type: 'error' as const }
+    default:
+      return { label: level || '未知', color: 'default' as const, message: '当前风险状态未知，请刷新页面确认。', type: 'info' as const }
+  }
+}
+
+function isTestLeveragePosition(leverage: number, maxLeverage?: number) {
+  return leverage > (maxLeverage ?? 40)
+}
+
+function formatPositionRiskRatio(value?: string | number | null) {
+  const ratio = Number(value ?? 0)
+  if (!Number.isFinite(ratio)) {
+    return {
+      text: '--',
+      color: '#8ca3b8',
+      note: '当前仓位风险数据不可用。',
+    }
+  }
+  if (ratio >= 100) {
+    return {
+      text: `${formatAmount(ratio, 2)}%`,
+      color: '#ff6b6b',
+      note: '仓位权益低于维持保证金要求，测试仓位会优先进入强平流程。',
+    }
+  }
+  if (ratio >= 80) {
+    return {
+      text: `${formatAmount(ratio, 2)}%`,
+      color: '#fbbf24',
+      note: '已接近维持保证金阈值，建议尽快减仓或补充保证金。',
+    }
+  }
+  return {
+    text: `${formatAmount(ratio, 2)}%`,
+    color: '#2ec9b0',
+    note: '当前仓位权益仍覆盖维持保证金要求。',
+  }
+}
+
+function getLiquidationBuffer(position?: Position) {
+  if (!position) {
+    return {
+      title: '清算缓冲',
+      valueText: '--',
+      color: '#8ca3b8',
+      note: '暂无持仓。',
+    }
+  }
+
+  const markPrice = Number(position.mark_price)
+  const liquidationPrice = Number(position.liquidation_price)
+  if (!Number.isFinite(markPrice) || !Number.isFinite(liquidationPrice) || markPrice <= 0 || liquidationPrice <= 0) {
+    return {
+      title: '清算缓冲',
+      valueText: 'N/A',
+      color: '#8ca3b8',
+      note: '当前仓位没有有效清算价，通常表示清算价已落到正常价格区间之外。',
+    }
+  }
+
+  const rawPercent =
+    position.side === 'long'
+      ? ((markPrice - liquidationPrice) / markPrice) * 100
+      : ((liquidationPrice - markPrice) / markPrice) * 100
+
+  if (rawPercent < 0) {
+    return {
+      title: '已穿清算线',
+      valueText: `${formatAmount(Math.abs(rawPercent), 2)}%`,
+      color: '#ff6b6b',
+      note: `当前标记价已经越过理论清算线，理论清算价 ${formatAmount(liquidationPrice, 4)}，liquidator 会优先处理这类仓位。`,
+    }
+  }
+
+  if (rawPercent < 5) {
+    return {
+      title: '清算缓冲',
+      valueText: `${formatAmount(rawPercent, 2)}%`,
+      color: '#fbbf24',
+      note: `理论清算价 ${formatAmount(liquidationPrice, 4)}，距离清算线非常近，价格轻微逆向波动就可能触发强平。`,
+    }
+  }
+
+  return {
+    title: '清算缓冲',
+    valueText: `${formatAmount(rawPercent, 2)}%`,
+    color: '#2ec9b0',
+    note: `理论清算价 ${formatAmount(liquidationPrice, 4)}，当前价格距离清算线仍有一定空间。`,
+  }
+}
+
 export default function TradePage() {
   const [symbol, setSymbol] = useState<string>('BTC-PERP')
   const [positionFilterSymbol, setPositionFilterSymbol] = useState<string>('BTC-PERP')
@@ -226,6 +330,7 @@ export default function TradePage() {
       size: string
       leverage: number
       reduce_only: boolean
+      test_mode: boolean
     }) =>
       (
         await post<OrderExecution>('/orders', {
@@ -236,6 +341,7 @@ export default function TradePage() {
           size: values.size,
           leverage: Number(values.leverage),
           reduce_only: values.reduce_only,
+          test_mode: values.test_mode,
           client_order_id: `web-${Date.now()}`,
         })
       ).data!,
@@ -260,6 +366,7 @@ export default function TradePage() {
     size: string
     leverage: number
     reduce_only: boolean
+    test_mode: boolean
   }) => {
     orderMutation.mutate(values)
   }
@@ -280,6 +387,7 @@ export default function TradePage() {
       size,
       leverage: record.leverage,
       reduce_only: true,
+      test_mode: isTestLeveragePosition(record.leverage, currentSymbol?.max_leverage),
     })
   }
 
@@ -315,10 +423,18 @@ export default function TradePage() {
   const selectedSize = Number(Form.useWatch('size', orderForm) ?? 0)
   const selectedSide = Form.useWatch('side', orderForm) ?? 'long'
   const selectedMarginMode = Form.useWatch('margin_mode', orderForm) ?? 'isolated'
+  const testModeEnabled = Boolean(Form.useWatch('test_mode', orderForm))
+  const leverageMax = testModeEnabled ? 1000 : currentSymbol?.max_leverage ?? 40
   const estimatedNotional = markPrice * selectedSize
   const estimatedMargin = selectedLeverage > 0 ? estimatedNotional / selectedLeverage : 0
   const takerFeeRate = Number(currentSymbol?.taker_fee_rate ?? 0)
   const estimatedFee = estimatedNotional * takerFeeRate
+
+  useEffect(() => {
+    if (selectedLeverage > leverageMax) {
+      orderForm.setFieldValue('leverage', leverageMax)
+    }
+  }, [leverageMax, orderForm, selectedLeverage])
   const filteredPositions = useMemo(() => {
     if (positionFilterSymbol === '__all__') {
       return positionsQuery.data ?? []
@@ -346,6 +462,14 @@ export default function TradePage() {
     }
     return (ordersQuery.data ?? []).filter((item) => item.symbol === orderHistoryFilterSymbol)
   }, [orderHistoryFilterSymbol, ordersQuery.data])
+  const accountRisk = riskMeta(accountQuery.data?.risk_level)
+  const latestLiquidationTrade = useMemo(
+    () =>
+      (tradesQuery.data ?? [])
+        .filter((item) => item.is_liquidation && item.symbol === symbol)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0],
+    [symbol, tradesQuery.data],
+  )
 
   const positionColumns = useMemo(
     () => [
@@ -377,7 +501,16 @@ export default function TradePage() {
           <Typography.Text style={{ color: Number(value) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>{formatAmount(value)}</Typography.Text>
         ),
       },
-      { title: '风险率', dataIndex: 'risk_ratio', key: 'risk_ratio', width: 84, render: (value: string) => `${formatAmount(value, 2)}%` },
+      {
+        title: '维持保证金占权益比',
+        dataIndex: 'risk_ratio',
+        key: 'risk_ratio',
+        width: 128,
+        render: (value: string) => {
+          const risk = formatPositionRiskRatio(value)
+          return <Typography.Text style={{ color: risk.color }}>{risk.text}</Typography.Text>
+        },
+      },
       { title: '清算价', dataIndex: 'liquidation_price', key: 'liquidation_price', width: 84, render: (value: string) => formatAmount(value, 2) },
       {
         title: '操作',
@@ -418,6 +551,7 @@ export default function TradePage() {
                   size: record.size,
                   leverage: record.leverage,
                   reduce_only: true,
+                  test_mode: isTestLeveragePosition(record.leverage, currentSymbol?.max_leverage),
                 })
               }
               loading={orderMutation.isPending}
@@ -436,6 +570,7 @@ export default function TradePage() {
                   size: String(Number(record.size) * 2),
                   leverage: record.leverage,
                   reduce_only: false,
+                  test_mode: isTestLeveragePosition(record.leverage, currentSymbol?.max_leverage),
                 })
               }
               loading={orderMutation.isPending}
@@ -446,7 +581,7 @@ export default function TradePage() {
         ),
       },
     ],
-    [messageApi, orderMutation.isPending, partialCloseSizes, symbolLabelMap],
+    [currentSymbol?.max_leverage, messageApi, orderMutation.isPending, partialCloseSizes, symbolLabelMap],
   )
 
   const tradeColumns = useMemo(
@@ -478,12 +613,8 @@ export default function TradePage() {
   )
 
   const topPosition = (positionsQuery.data ?? [])[0]
-  const marginRatio = topPosition ? Number(topPosition.risk_ratio ?? 0) : 0
-  const liquidationDistance = topPosition
-    ? topPosition.side === 'long'
-      ? ((Number(topPosition.mark_price) - Number(topPosition.liquidation_price)) / Math.max(Number(topPosition.mark_price), 1)) * 100
-      : ((Number(topPosition.liquidation_price) - Number(topPosition.mark_price)) / Math.max(Number(topPosition.mark_price), 1)) * 100
-    : 0
+  const positionRisk = formatPositionRiskRatio(topPosition?.risk_ratio)
+  const liquidationBuffer = getLiquidationBuffer(topPosition)
 
   const orderColumns = useMemo(
     () => [
@@ -645,6 +776,12 @@ export default function TradePage() {
               />
             ) : (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <Alert
+                  type={accountRisk.type}
+                  showIcon
+                  message={`账户风险状态：${accountRisk.label}`}
+                  description={accountRisk.message}
+                />
                 <Card size="small" className="rg-glass-card">
                   <Row gutter={[12, 12]}>
                     <Col span={12}>
@@ -664,7 +801,7 @@ export default function TradePage() {
                 <Form
                   form={orderForm}
                   layout="vertical"
-                  initialValues={{ side: 'long', margin_mode: 'isolated', leverage: 10, reduce_only: false }}
+                  initialValues={{ side: 'long', margin_mode: 'isolated', leverage: 10, reduce_only: false, test_mode: false }}
                   onFinish={(values) => orderMutation.mutate(values)}
                 >
                   <Form.Item label="方向" name="side">
@@ -677,6 +814,18 @@ export default function TradePage() {
                   <Form.Item label="保证金模式" name="margin_mode">
                     <Segmented block options={[{ label: '逐仓', value: 'isolated' }, { label: '全仓', value: 'cross' }]} />
                   </Form.Item>
+                  <Form.Item label="测试专用" name="test_mode" valuePropName="checked">
+                    <Switch checkedChildren="1000x 测试" unCheckedChildren="常规" />
+                  </Form.Item>
+                  {testModeEnabled ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="测试专用高杠杆"
+                      description="已开启测试模式。当前交易对可临时使用最高 1000x 杠杆，仅用于自动清算与强平联调。"
+                    />
+                  ) : null}
                   <Form.Item
                     label="数量"
                     name="size"
@@ -689,10 +838,10 @@ export default function TradePage() {
                     name="leverage"
                     rules={[{ required: true, message: '请输入杠杆' }]}
                   >
-                    <InputNumber min={1} max={currentSymbol?.max_leverage ?? 40} style={{ width: '100%' }} />
+                    <InputNumber min={1} max={leverageMax} style={{ width: '100%' }} />
                   </Form.Item>
                   <Form.Item label={`杠杆滑块 ${selectedLeverage}x`}>
-                    <Slider min={1} max={currentSymbol?.max_leverage ?? 40} value={selectedLeverage} onChange={(value) => orderForm.setFieldValue('leverage', value)} />
+                    <Slider min={1} max={leverageMax} value={selectedLeverage} onChange={(value) => orderForm.setFieldValue('leverage', value)} />
                   </Form.Item>
                   <Form.Item label="只减仓" name="reduce_only" valuePropName="checked">
                     <Switch />
@@ -727,30 +876,56 @@ export default function TradePage() {
         </Col>
         <Col xs={24}>
           <Card className="rg-glass-card">
+            {authenticated ? (
+              <Space direction="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
+                <Alert
+                  type={accountRisk.type}
+                  showIcon
+                  message={`当前账户状态：${accountRisk.label}`}
+                  description={`风险率 ${formatAmount(accountQuery.data?.margin_ratio, 2)}%，维持保证金 ${formatAmount(
+                    accountQuery.data?.maintenance_margin,
+                  )} USDC。`}
+                />
+                {latestLiquidationTrade ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    message="检测到最近强平"
+                    description={`${symbolLabelMap.get(latestLiquidationTrade.symbol) ?? latestLiquidationTrade.symbol} 在 ${new Date(
+                      latestLiquidationTrade.created_at,
+                    ).toLocaleString()} 被系统强平，成交价 ${formatAmount(latestLiquidationTrade.price, 2)}，实现盈亏 ${formatAmount(
+                      latestLiquidationTrade.realized_pnl,
+                    )} USDC。`}
+                  />
+                ) : null}
+              </Space>
+            ) : null}
             {authenticated && topPosition ? (
               <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-                <Col xs={24} md={8}>
-                  <Card size="small" className="rg-glass-card">
+                <Col xs={24} md={8} style={{ display: 'flex' }}>
+                  <Card size="small" className="rg-glass-card rg-risk-summary-card" style={{ width: '100%' }}>
                     <Typography.Text type="secondary">未实现盈亏</Typography.Text>
                     <Typography.Title level={4} style={{ margin: 0, color: Number(topPosition.unrealized_pnl) >= 0 ? '#2ec9b0' : '#ff6b6b' }}>
                       {formatAmount(topPosition.unrealized_pnl)} USDC
                     </Typography.Title>
                   </Card>
                 </Col>
-                <Col xs={24} md={8}>
-                  <Card size="small" className="rg-glass-card">
-                    <Typography.Text type="secondary">保证金率</Typography.Text>
-                    <Typography.Title level={4} style={{ margin: 0 }}>
-                      {formatAmount(marginRatio, 2)}%
+                <Col xs={24} md={8} style={{ display: 'flex' }}>
+                  <Card size="small" className="rg-glass-card rg-risk-summary-card" style={{ width: '100%' }}>
+                    <Typography.Text type="secondary">维持保证金占权益比</Typography.Text>
+                    <Typography.Title level={4} style={{ margin: 0, color: positionRisk.color }}>
+                      {positionRisk.text}
                     </Typography.Title>
+                    <Typography.Text type="secondary">{positionRisk.note}</Typography.Text>
                   </Card>
                 </Col>
-                <Col xs={24} md={8}>
-                  <Card size="small" className="rg-glass-card">
-                    <Typography.Text type="secondary">距清算</Typography.Text>
-                    <Typography.Title level={4} style={{ margin: 0, color: liquidationDistance > 8 ? '#2ec9b0' : '#fbbf24' }}>
-                      {formatAmount(liquidationDistance, 2)}%
+                <Col xs={24} md={8} style={{ display: 'flex' }}>
+                  <Card size="small" className="rg-glass-card rg-risk-summary-card" style={{ width: '100%' }}>
+                    <Typography.Text type="secondary">{liquidationBuffer.title}</Typography.Text>
+                    <Typography.Title level={4} style={{ margin: 0, color: liquidationBuffer.color }}>
+                      {liquidationBuffer.valueText}
                     </Typography.Title>
+                    <Typography.Text type="secondary">{liquidationBuffer.note}</Typography.Text>
                   </Card>
                 </Col>
               </Row>

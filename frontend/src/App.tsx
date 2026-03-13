@@ -5,6 +5,8 @@ import { useEffect } from 'react'
 import AppLayout from './components/layout/AppLayout'
 import TradePage from './pages/TradePage'
 import AccountPage from './pages/AccountPage'
+import LandingPage from './pages/LandingPage'
+import DocsPage from './pages/DocsPage'
 import { useThemeStore } from './stores/themeStore'
 
 const queryClient = new QueryClient({
@@ -69,9 +71,11 @@ export default function App() {
         <AntdApp>
           <BrowserRouter>
             <Routes>
-              <Route element={<AppLayout />}>
-                <Route path="/" element={<TradePage />} />
-                <Route path="/account" element={<AccountPage />} />
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/docs" element={<DocsPage />} />
+              <Route path="/app" element={<AppLayout />}>
+                <Route index element={<TradePage />} />
+                <Route path="account" element={<AccountPage />} />
               </Route>
             </Routes>
           </BrowserRouter>

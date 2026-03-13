@@ -84,6 +84,24 @@ function shortenMiddle(value: string, left = 10, right = 8): string {
   return `${value.slice(0, left)}...${value.slice(-right)}`
 }
 
+function riskMeta(level?: string) {
+  switch ((level ?? '').toLowerCase()) {
+    case 'active':
+    case 'normal':
+      return { label: '正常', color: 'green' as const, type: 'success' as const, message: '账户当前风险状态正常。' }
+    case 'at_risk':
+      return { label: '风险上升', color: 'gold' as const, type: 'warning' as const, message: '账户已接近风控阈值，建议尽快减仓或补充保证金。' }
+    case 'reduce_only':
+      return { label: '只减仓', color: 'orange' as const, type: 'warning' as const, message: '账户已进入只减仓状态，不能继续增加新风险仓位。' }
+    case 'liquidating':
+      return { label: '强平中', color: 'red' as const, type: 'error' as const, message: '账户已进入强平流程，请观察仓位与成交记录变化。' }
+    case 'frozen':
+      return { label: '冻结', color: 'magenta' as const, type: 'error' as const, message: '账户已被冻结，请检查风险状态或管理员处理结果。' }
+    default:
+      return { label: level || '未知', color: 'default' as const, type: 'info' as const, message: '风险状态未知，请刷新页面确认。' }
+  }
+}
+
 function MetricCard({
   title,
   value,
@@ -191,6 +209,7 @@ export default function AccountPage() {
     },
     enabled: authenticated,
   })
+  const riskState = riskMeta(accountQuery.data?.risk_level)
 
   const loginMutation = useMutation({
     mutationFn: async () => {
@@ -569,6 +588,12 @@ export default function AccountPage() {
             style={{ width: '100%', height: '100%' }}
             styles={{ body: { display: 'flex', flexDirection: 'column', gap: 18 } }}
           >
+            <Alert
+              type={riskState.type}
+              showIcon
+              message={`账户风险状态：${riskState.label}`}
+              description={riskState.message}
+            />
             <div
               style={{
                 borderRadius: 16,
@@ -650,8 +675,8 @@ export default function AccountPage() {
               <Descriptions.Item label="待提现占用">{formatAmount(accountQuery.data?.pending_withdrawal)} USDC</Descriptions.Item>
               <Descriptions.Item label="维持保证金">{formatAmount(accountQuery.data?.maintenance_margin)} USDC</Descriptions.Item>
               <Descriptions.Item label="风险等级">
-                <Tag color={accountQuery.data?.risk_level === 'danger' ? 'red' : accountQuery.data?.risk_level === 'warning' ? 'gold' : 'green'}>
-                  {accountQuery.data?.risk_level ?? 'normal'}
+                <Tag color={riskState.color}>
+                  {riskState.label}
                 </Tag>
               </Descriptions.Item>
             </Descriptions>

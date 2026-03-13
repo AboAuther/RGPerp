@@ -30,6 +30,7 @@ type createOrderRequest struct {
 	Leverage      uint32 `json:"leverage" binding:"required"`
 	Margin        string `json:"margin"`
 	ReduceOnly    bool   `json:"reduce_only"`
+	TestMode      bool   `json:"test_mode"`
 }
 
 func (h *OrderHandler) Create(c *gin.Context) {
@@ -71,6 +72,7 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		Leverage:      req.Leverage,
 		Margin:        margin,
 		ReduceOnly:    req.ReduceOnly,
+		TestMode:      req.TestMode,
 	})
 	if err != nil {
 		response.Fail(c, err)

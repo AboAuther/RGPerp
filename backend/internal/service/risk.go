@@ -63,7 +63,7 @@ func buildRiskState(db *gorm.DB, userID uint64) (*RiskState, error) {
 		unrealized = unrealized.Add(calculatePnL(pos.Side, pos.EntryPrice, markPrice, pos.Size))
 		maintenanceRate := decimal.Zero
 		if sym, ok := symbolMap[pos.Symbol]; ok {
-			maintenanceRate = sym.MaintenanceMarginRate
+			maintenanceRate = effectiveMaintenanceRate(sym.InitialMarginRate, sym.MaintenanceMarginRate, pos.Leverage)
 		}
 		notional := markPrice.Mul(pos.Size)
 		initialMargin := pos.Margin

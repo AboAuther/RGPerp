@@ -7,12 +7,13 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/themeStore'
+import BrandLogo from '../brand/BrandLogo'
 
 const { Header, Content, Footer } = Layout
 
 const menuItems = [
-  { key: '/', icon: <LineChartOutlined />, label: '交易' },
-  { key: '/account', icon: <WalletOutlined />, label: '资产' },
+  { key: '/app', icon: <LineChartOutlined />, label: '交易' },
+  { key: '/app/account', icon: <WalletOutlined />, label: '资产' },
 ]
 
 export default function AppLayout() {
@@ -21,6 +22,7 @@ export default function AppLayout() {
   const { token } = theme.useToken()
   const { mode, toggleMode } = useThemeStore()
   const isDark = mode === 'dark'
+  const selectedMenuKey = location.pathname.startsWith('/app/account') ? '/app/account' : '/app'
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -38,23 +40,30 @@ export default function AppLayout() {
         }}
         className="rg-glass-card"
       >
-        <Space size={12} style={{ marginRight: 24 }}>
-          <div
-            style={{
-              width: 14,
-              height: 14,
-              borderRadius: 999,
-              background: 'linear-gradient(135deg, #20c9b5 0%, #33d69f 100%)',
-              boxShadow: '0 0 18px rgba(32, 201, 181, 0.65)',
-            }}
-          />
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 12,
+            marginRight: 24,
+            padding: 0,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: 'inherit',
+          }}
+          aria-label="返回首页"
+        >
+          <BrandLogo size={34} />
           <Typography.Title level={4} style={{ margin: 0, whiteSpace: 'nowrap' }}>
             RGPerp
           </Typography.Title>
-        </Space>
+        </button>
         <Menu
           mode="horizontal"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[selectedMenuKey]}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
           style={{ flex: 1, border: 'none', background: 'transparent' }}

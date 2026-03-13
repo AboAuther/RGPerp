@@ -14,6 +14,7 @@ import (
 )
 
 const priceMaxAge = 60 * time.Second
+const testLeverageLimit uint32 = 1000
 
 type OrderService struct {
 	db *gorm.DB
@@ -34,6 +35,7 @@ type CreateOrderInput struct {
 	Leverage      uint32
 	Margin        decimal.Decimal
 	ReduceOnly    bool
+	TestMode      bool
 }
 
 type OrderExecutionOutput struct {
@@ -124,7 +126,11 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 		return nil, err
 	}
 
-	if input.Leverage == 0 || input.Leverage > symbol.MaxLeverage {
+	maxLeverage := symbol.MaxLeverage
+	if input.TestMode && testLeverageLimit > maxLeverage {
+		maxLeverage = testLeverageLimit
+	}
+	if input.Leverage == 0 || input.Leverage > maxLeverage {
 		return nil, apperr.ErrInvalidLeverage
 	}
 	if input.Size.LessThan(symbol.MinOrderSize) {
@@ -258,6 +264,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			account.LockedBalance = account.LockedBalance.Add(requiredMargin)
 			marginConsumed = requiredMargin
 
+			effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, input.Leverage)
 			position := model.Position{
 				UserID:           input.UserID,
 				Symbol:           input.Symbol,
@@ -266,7 +273,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				Size:             input.Size,
 				EntryPrice:       price,
 				MarkPrice:        price,
-				LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, input.Size, requiredMargin, symbol.MaintenanceMarginRate),
+				LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, input.Size, requiredMargin, effectiveMaintenance),
 				Margin:           requiredMargin,
 				Leverage:         input.Leverage,
 				Status:           "open",
@@ -274,7 +281,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 			if err := tx.Create(&position).Error; err != nil {
 				return err
 			}
-			builtPosition, buildErr := s.buildPositionOutput(tx, account, position, price, symbol.MaintenanceMarginRate)
+			builtPosition, buildErr := s.buildPositionOutput(tx, account, position, price, effectiveMaintenance)
 			if buildErr != nil {
 				return buildErr
 			}
@@ -313,6 +320,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 				account.LockedBalance = account.LockedBalance.Add(requiredMargin)
 				marginConsumed = requiredMargin
 
+				effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, input.Leverage)
 				result := tx.Model(&model.Position{}).
 					Where("id = ? AND version = ?", existing.ID, positionVersion).
 					Updates(map[string]interface{}{
@@ -322,7 +330,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						"mark_price":        price,
 						"leverage":          input.Leverage,
 						"margin_mode":       activeMarginMode,
-						"liquidation_price": calculateLiquidationPrice(existing.Side, activeMarginMode, newEntry, newSize, newMargin, symbol.MaintenanceMarginRate),
+						"liquidation_price": calculateLiquidationPrice(existing.Side, activeMarginMode, newEntry, newSize, newMargin, effectiveMaintenance),
 						"version":           gorm.Expr("version + 1"),
 					})
 				if result.Error != nil {
@@ -361,13 +369,14 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						return apperr.ErrConcurrentUpdate
 					}
 				} else {
+					effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, existing.Leverage)
 					result := tx.Model(&model.Position{}).
 						Where("id = ? AND version = ?", existing.ID, positionVersion).
 						Updates(map[string]interface{}{
 							"size":              remainingSize,
 							"margin":            remainingMargin,
 							"mark_price":        price,
-							"liquidation_price": calculateLiquidationPrice(existing.Side, activeMarginMode, existing.EntryPrice, remainingSize, remainingMargin, symbol.MaintenanceMarginRate),
+							"liquidation_price": calculateLiquidationPrice(existing.Side, activeMarginMode, existing.EntryPrice, remainingSize, remainingMargin, effectiveMaintenance),
 							"version":           gorm.Expr("version + 1"),
 						})
 					if result.Error != nil {
@@ -378,7 +387,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					}
 					existing.Size = remainingSize
 					existing.Margin = remainingMargin
-					builtPosition, buildErr := s.buildPositionOutput(tx, account, existing, price, symbol.MaintenanceMarginRate)
+					builtPosition, buildErr := s.buildPositionOutput(tx, account, existing, price, effectiveMaintenance)
 					if buildErr != nil {
 						return buildErr
 					}
@@ -395,7 +404,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					if account.AvailableBalance.LessThan(flipMargin) {
 						return apperr.ErrInsufficientMargin
 					}
-				if riskState.FreeCollateral.LessThan(flipMargin) {
+					if riskState.FreeCollateral.LessThan(flipMargin) {
 						return apperr.ErrOrderRejected
 					}
 
@@ -403,6 +412,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					account.LockedBalance = account.LockedBalance.Add(flipMargin)
 					marginConsumed = marginConsumed.Add(flipMargin)
 
+					effectiveMaintenance := effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, input.Leverage)
 					newPos := model.Position{
 						UserID:           input.UserID,
 						Symbol:           input.Symbol,
@@ -411,7 +421,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 						Size:             flipSize,
 						EntryPrice:       price,
 						MarkPrice:        price,
-						LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, flipSize, flipMargin, symbol.MaintenanceMarginRate),
+						LiquidationPrice: calculateLiquidationPrice(input.Side, input.MarginMode, price, flipSize, flipMargin, effectiveMaintenance),
 						Margin:           flipMargin,
 						Leverage:         input.Leverage,
 						Status:           "open",
@@ -419,7 +429,7 @@ func (s *OrderService) Create(input CreateOrderInput) (*OrderExecutionOutput, er
 					if err := tx.Create(&newPos).Error; err != nil {
 						return err
 					}
-					builtPosition, buildErr := s.buildPositionOutput(tx, account, newPos, price, symbol.MaintenanceMarginRate)
+					builtPosition, buildErr := s.buildPositionOutput(tx, account, newPos, price, effectiveMaintenance)
 					if buildErr != nil {
 						return buildErr
 					}
@@ -569,7 +579,7 @@ func (s *OrderService) ListOpenPositions(userID uint64) ([]PositionListItem, err
 	for _, pos := range positions {
 		maintenanceRate := decimal.Zero
 		if sym, ok := symbols[pos.Symbol]; ok {
-			maintenanceRate = sym.MaintenanceMarginRate
+			maintenanceRate = effectiveMaintenanceRate(sym.InitialMarginRate, sym.MaintenanceMarginRate, pos.Leverage)
 		}
 		item, err := s.buildPositionOutput(s.db, account, pos, latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice), maintenanceRate)
 		if err != nil {
@@ -699,7 +709,13 @@ func (s *OrderService) refreshPositionOutput(tx *gorm.DB, account model.Account,
 	if err != nil {
 		return nil, err
 	}
-	return s.buildPositionOutput(tx, account, pos, latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice), symbol.MaintenanceMarginRate)
+	return s.buildPositionOutput(
+		tx,
+		account,
+		pos,
+		latestMarkForSymbol(markPrices, pos.Symbol, pos.MarkPrice),
+		effectiveMaintenanceRate(symbol.InitialMarginRate, symbol.MaintenanceMarginRate, pos.Leverage),
+	)
 }
 
 func (s *OrderService) buildPositionOutput(tx *gorm.DB, account model.Account, pos model.Position, markPrice, maintenanceRate decimal.Decimal) (*PositionListItem, error) {
@@ -750,6 +766,27 @@ func calculatePnL(side string, entryPrice, exitPrice, size decimal.Decimal) deci
 	default:
 		return decimal.Zero
 	}
+}
+
+func effectiveMaintenanceRate(initialRate, maintenanceRate decimal.Decimal, leverage uint32) decimal.Decimal {
+	if leverage == 0 {
+		return maintenanceRate
+	}
+	derivedInitialRate := decimal.NewFromInt(1).Div(decimal.NewFromInt(int64(leverage)))
+	if initialRate.GreaterThan(decimal.Zero) && derivedInitialRate.GreaterThan(initialRate) {
+		derivedInitialRate = initialRate
+	}
+	derivedMaintenanceCap := derivedInitialRate.Div(decimal.NewFromInt(2))
+	if derivedMaintenanceCap.LessThanOrEqual(decimal.Zero) {
+		return maintenanceRate
+	}
+	if maintenanceRate.LessThanOrEqual(decimal.Zero) {
+		return derivedMaintenanceCap
+	}
+	if derivedMaintenanceCap.LessThan(maintenanceRate) {
+		return derivedMaintenanceCap
+	}
+	return maintenanceRate
 }
 
 func calculateLiquidationPrice(side, marginMode string, entryPrice, size, margin, maintenanceRate decimal.Decimal) decimal.Decimal {
@@ -866,11 +903,8 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 		}
 	}
 	target := internalNet.Round(18)
-	currentExternal := decimal.Zero
-	var lastSnapshot model.SystemRiskSnapshot
-	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastSnapshot).Error; err == nil {
-		currentExternal = lastSnapshot.ExternalHedgePosition
-	} else if err != gorm.ErrRecordNotFound {
+	currentExternal, err := loadProjectedExternalPosition(tx, symbol)
+	if err != nil {
 		return err
 	}
 	drift := target.Sub(currentExternal).Round(18)
@@ -910,4 +944,22 @@ func (s *OrderService) createMockHedgeTask(tx *gorm.DB, symbol, triggerType stri
 		ExternalOrderID: fmt.Sprintf("mock-%s-%d", strings.ToLower(symbol), task.ID),
 		Status:          "mock_pending",
 	}).Error
+}
+
+func loadProjectedExternalPosition(tx *gorm.DB, symbol string) (decimal.Decimal, error) {
+	var lastTask model.HedgeTask
+	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastTask).Error; err == nil {
+		return lastTask.TargetHedgePosition, nil
+	} else if err != gorm.ErrRecordNotFound {
+		return decimal.Zero, err
+	}
+
+	var lastSnapshot model.SystemRiskSnapshot
+	if err := tx.Where("symbol = ?", symbol).Order("id desc").First(&lastSnapshot).Error; err == nil {
+		return lastSnapshot.ExternalHedgePosition, nil
+	} else if err != gorm.ErrRecordNotFound {
+		return decimal.Zero, err
+	}
+
+	return decimal.Zero, nil
 }

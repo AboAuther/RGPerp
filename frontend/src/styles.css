@@ -54,6 +54,19 @@ body.light-theme {
   flex-wrap: wrap;
 }
 
+.rg-risk-summary-card {
+  min-height: 132px;
+  display: flex;
+}
+
+.rg-risk-summary-card .ant-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 .rg-position-actions {
   display: flex;
   align-items: center;
